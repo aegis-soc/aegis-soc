@@ -45,6 +45,10 @@ docker compose logs -f api # 首次启动会执行 bootstrap 并打印完成日�
 
 默认账号 `admin / <BOOTSTRAP_ADMIN_PASSWORD>`（默认 `Admin@123456`），**首次登录会强制要求改密**。
 
+> ✅ **部署完成先别急着用**：执行 `python scripts/smoke_test.py --secret <你的SECRET> --password <你的口令>`
+> 一条命令跑完 16 项闭环检查（界面 / 告警 / 策略 / 下发 / 审计 / 熔断），
+> 详见 [verify.md](verify.md)。
+
 ### 2.1 可选：使用预构建镜像（不本地构建）
 
 仓库打了 `v*` tag 后，GitHub Actions 会自动构建多架构镜像（`linux/amd64` + `linux/arm64`）并推送到 ghcr.io，
