@@ -94,7 +94,7 @@ http://<平台地址>/api/v1/alerts/graylog?secret=你的GRAYLOG_WEBHOOK_SECRET
 > 无 Graylog 也能完整体验：内置 `mock` 插件 + `docs/graylog-config-guide.md` 里的 `curl` 样例即可跑通「告警 → 策略 → 任务 → 下发 → 到期解封」闭环。
 > Demo 模式（一键拉起 Graylog + ES + MongoDB）规划于 v1.1，见 `docker-compose-demo.yml`。
 > ☁️ 部署到云服务器？另见 [docs/deploy-cloud.md](docs/deploy-cloud.md)：资源基线、安全组与端口、HTTPS 启用、定时备份、磁盘与日志治理、上线自检清单。
-> ✅ **部署完怎么验？** 一条命令跑完 16 项闭环检查：`python scripts/smoke_test.py --secret <SECRET> --password <口令>`，详见 [docs/verify.md](docs/verify.md)。
+> ✅ **部署完怎么验？** 一条命令跑完 18 项闭环检查：`python scripts/smoke_test.py --secret <SECRET> --password <口令>`，详见 [docs/verify.md](docs/verify.md)。
 
 ---
 

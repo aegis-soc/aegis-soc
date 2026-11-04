@@ -19,13 +19,43 @@ GitHub 是**代码托管 + CI 执行**平台，不会替你跑起服务。在仓
 
 | 方式 | 成本 | 适用 |
 |---|---|---|
-| 本地 Docker Desktop | 装一次，占用本机资源 | 开发调试 |
+| **免 Docker 本机直跑** | ~190 MB 内存，无需装 Docker | 只想看界面 / 改样式（最低门槛，见 §0.1） |
+| 本地 Docker Desktop | 装一次，空闲即占 1~2 GB 内存 + 5~10 GB 磁盘 | 开发调试 |
 | 云服务器 `docker compose up -d` | 2C4G 起 | 生产 / 长期演示（推荐） |
 | GitHub Codespaces | 每月免费额度，用完按量 | 临时演示，能拿到一个公网预览链接 |
 
 > Codespaces 路线：仓库页 → `Code` → `Codespaces` → 新建 → 终端里执行
 > `cp .env.example .env && docker compose up -d`，待 `docker compose ps` 全绿后，
 > 在 **PORTS** 面板把 `8080` 设为 Public，即可用浏览器打开界面。
+
+### 0.1 免 Docker 本机直跑（最轻，仅用于看界面）
+
+机器装不了 Docker（磁盘不足、虚拟化未开、系统版本过低）时，可直接用原生进程跑：
+
+```powershell
+# Windows
+powershell -ExecutionPolicy Bypass -File scripts\dev-local.ps1          # 启动
+powershell -ExecutionPolicy Bypass -File scripts\dev-local.ps1 -Stop    # 停止
+```
+
+```bash
+# macOS / Linux
+cd backend && python -m venv .venv && .venv/bin/pip install -r requirements.txt
+DATABASE_URL="sqlite:///./_local.db" TASK_EAGER=true GRAYLOG_WEBHOOK_SECRET="local-dev-secret" \
+  .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 &
+cd ../frontend && npm install && npx vite --host 127.0.0.1 --port 5173
+```
+
+打开 `http://127.0.0.1:5173`（前端 Vite，`/api` 反代到 8000）。
+
+| 项 | 本模式 | 生产（Docker） |
+|---|---|---|
+| 数据库 | SQLite 单文件 | MySQL 8 |
+| 任务执行 | 同步、进程内（`TASK_EAGER`） | Celery Worker + Redis |
+| 到期解封 | 无 Beat，需手动触发 | Beat 每分钟自动扫描 |
+| 内存占用 | ≈ 190 MB | ≈ 2 GB |
+
+> ⚠️ 本模式**只用于界面与流程演示**，不能替代 MySQL/Redis/Celery 的真实链路验收。
 
 ---
 
@@ -64,7 +94,7 @@ export SMOKE_WEBHOOK_SECRET=yyy
 python scripts/smoke_test.py
 ```
 
-### 覆盖的 9 组检查（共 16 项）
+### 覆盖的 9 组检查（共 18 项）
 
 | # | 检查 | 验证了什么 |
 |---|---|---|
@@ -86,7 +116,7 @@ python scripts/smoke_test.py
   ✅ 生成 IOC  —— ioc_count=1
   ✅ 生成下发任务  —— task_count=1
 ...
-结果：16/16 项通过
+结果：18/18 项通过
 🎉 全链路闭环验证通过：界面 → 告警 → 策略 → 下发 → 审计 均正常
 ```
 
@@ -128,6 +158,6 @@ python scripts/smoke_test.py
 以下四条都满足，才算「功能跑通」：
 
 1. CI 绿色（代码层面可信）
-2. `scripts/smoke_test.py` 输出 **16/16**
+2. `scripts/smoke_test.py` 输出 **18/18**
 3. 界面 8 步人工验收无异常
 4. 至少用**一台真实设备插件**（而非 mock）成功下发并解封一次

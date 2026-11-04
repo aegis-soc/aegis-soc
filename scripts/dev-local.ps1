@@ -28,6 +28,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"   # 去掉 Invoke-WebRequest 的进度条刷屏
 $root = Split-Path -Parent $PSScriptRoot
 $backendDir = Join-Path $root "backend"
 $frontendDir = Join-Path $root "frontend"
@@ -100,7 +101,22 @@ if ($ready) {
 } else {
     Write-Host "Backend  NOT ready after 30s, check console output." -ForegroundColor Red
 }
-Write-Host ("Frontend UI   : http://127.0.0.1:{0}/" -f $FrontendPort) -ForegroundColor Green
+
+# --- wait for frontend (vite first start needs to pre-bundle deps) ---
+$uiUrl = "http://127.0.0.1:$FrontendPort/"
+$uiReady = $false
+for ($i = 1; $i -le 40; $i++) {
+    Start-Sleep -Milliseconds 750
+    try {
+        $r = Invoke-WebRequest -Uri $uiUrl -UseBasicParsing -TimeoutSec 3
+        if ($r.StatusCode -eq 200) { $uiReady = $true; break }
+    } catch { }
+}
+if ($uiReady) {
+    Write-Host ("Frontend ready : {0}" -f $uiUrl) -ForegroundColor Green
+} else {
+    Write-Host "Frontend NOT ready after 30s (first run may still be pre-bundling, retry in a moment)." -ForegroundColor Yellow
+}
 Write-Host ("API docs      : http://127.0.0.1:{0}/api/docs" -f $BackendPort) -ForegroundColor Green
 Write-Host ("Webhook secret: {0}" -f $WebhookSecret) -ForegroundColor DarkGray
 Write-Host ""

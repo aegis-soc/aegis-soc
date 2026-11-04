@@ -6,7 +6,7 @@
 
 ### Added
 
-- **一键冒烟验收脚本** `scripts/smoke_test.py`：仅用 Python 标准库，覆盖界面静态资源、健康检查、登录、白名单豁免、告警接入、幂等去重、IOC 落库、插件下发、任务日志、熔断、审计与大盘共 16 项检查，退出码可直接用于发布流水线
+- **一键冒烟验收脚本** `scripts/smoke_test.py`：仅用 Python 标准库，覆盖界面静态资源、健康检查、登录、白名单豁免、告警接入、幂等去重、IOC 落库、插件下发、任务日志、熔断、审计与大盘共 18 项检查，退出码可直接用于发布流水线
 - **验证与验收指南** `docs/verify.md`：三层验证模型（CI / 冒烟脚本 / 界面人工验收）、GitHub 上可见范围说明、三种「看到界面」的落地方式（本地 Docker / 云服务器 / Codespaces）、常见失败对照表
 - **CI 工作流** `.github/workflows/ci.yml`：后端 `compileall` + `pytest`、前端 `npm ci` + `npm run build`、两份 Compose 配置校验
 - **发布工作流** `.github/workflows/release.yml`：推送 `v*` tag 自动构建 `linux/amd64` / `linux/arm64` 双架构镜像并推送 `ghcr.io`，同时自动生成 GitHub Release
