@@ -39,6 +39,7 @@ yarn-error.log*
 *.log
 logs/
 runtime/
+scripts/.dev-local.pids
 .idea/
 .vscode/
 .DS_Store

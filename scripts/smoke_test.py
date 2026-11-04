@@ -98,9 +98,12 @@ def main() -> int:
         with urllib.request.urlopen(req, timeout=args.timeout) as resp:
             html = resp.read().decode("utf-8", "replace")
         step("首页 HTTP 200", resp.status == 200, f"status={resp.status}")
-        step("返回前端页面（含 app 挂载点或 assets 资源）",
-             '<div id="app">' in html or "/assets/" in html,
-             "HTML 中未找到前端挂载点，nginx 可能未指向 frontend 容器")
+        mounted = '<div id="app">' in html
+        has_assets = "/assets/" in html
+        step("返回前端页面（含 app 挂载点或 assets 资源）", mounted or has_assets,
+             "已挂载 #app" if mounted else
+             ("已引用构建产物 /assets/" if has_assets else
+              "HTML 中未找到前端挂载点，nginx 可能未指向 frontend 容器"))
     except urllib.error.HTTPError as e:
         if e.code == 404:
             skip("首页检查（当前为后端直连模式，未挂前端）",
