@@ -42,7 +42,7 @@ jobs:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: 准备 QEMU（跨架构构建）
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: 准备 Buildx
         uses: docker/setup-buildx-action@v3
