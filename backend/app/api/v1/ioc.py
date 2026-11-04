@@ -1,0 +1,446 @@
+"""IOC 黑名单（IP / 域名）与 IP 白名单管理。
+
+硬性规则：白名单优先、内网/保留地址禁止封禁、删除黑名单自动生成解封任务、
+新增白名单自动对网段内已下发的黑名单生成解封任务。
+"""
+from __future__ import annotations
+
+import ipaddress
+import uuid
+from datetime import timedelta
+
+from fastapi import APIRouter, Depends, Query, Request
+from sqlalchemy import or_, select
+from sqlalchemy.orm import Session
+
+from app.common import BizError, client_ip, ok, paginate
+from app.database import get_db, utcnow
+from app.deps import get_current_user, require_perms
+from app.engines.policy import (
+    create_block_tasks_for_ioc,
+    create_task,
+    dispatch_tasks,
+    unblock_existing_for_whitelist,
+)
+from app.engines.validation import check_whitelist, match_devices, validate_ioc
+from app.models import IocDomainDetail, IocIndicator, IocIpDetail, IpWhitelist, SystemUser
+from app.schemas import (
+    IocCreateIn,
+    IocOut,
+    IocUpdateIn,
+    WhitelistCheckOut,
+    WhitelistCreateIn,
+    WhitelistImportIn,
+    WhitelistOut,
+)
+from app.services.audit import write_audit
+
+router = APIRouter(tags=["IOC 与白名单"])
+
+
+def _parse_whitelist(value: str) -> tuple[str, str | None, bytes, int, int]:
+    raw = (value or "").strip()
+    try:
+        network = ipaddress.ip_network(raw, strict=False)
+    except ValueError:
+        raise BizError(f"非法白名单 IP/CIDR: {raw}")
+    min_prefix = 8 if network.version == 4 else 32
+    if network.prefixlen < min_prefix:
+        raise BizError(f"白名单网段过大（最大允许 /{min_prefix}）: {raw}")
+    is_cidr = "/" in raw
+    return (
+        str(network.network_address),
+        str(network) if is_cidr else None,
+        network.network_address.packed.ljust(16, b"\x00"),
+        network.prefixlen,
+        1 if is_cidr else 0,
+    )
+
+
+def _get_ioc(db: Session, ioc_id: int, ioc_type: str | None = None) -> IocIndicator:
+    row = db.get(IocIndicator, ioc_id)
+    if row is None or (ioc_type and row.ioc_type != ioc_type):
+        raise BizError("IOC 记录不存在", 404, 404)
+    return row
+
+
+def _create_ioc(
+    ioc_type: str,
+    body: IocCreateIn,
+    request: Request,
+    db: Session,
+    user: SystemUser,
+):
+    # 白名单优先：受保护地址先判定豁免，再进入合法性校验
+    if ioc_type == "IP":
+        try:
+            addr = ipaddress.ip_network(body.ioc_value.strip(), strict=False).network_address
+            hit, matched = check_whitelist(db, str(addr))
+        except ValueError:
+            hit, matched = False, None
+        if hit:
+            raise BizError(f"该 IP 命中白名单 {matched}，禁止加入黑名单", 403, 403)
+
+    check = validate_ioc(ioc_type, body.ioc_value)
+    if not check.ok:
+        raise BizError(check.message, 400, 400)
+
+    expire_at = body.expire_at
+    if expire_at is None and body.duration_seconds:
+        expire_at = utcnow() + timedelta(seconds=body.duration_seconds)
+
+    row = (
+        db.query(IocIndicator)
+        .filter(
+            IocIndicator.ioc_type == ioc_type,
+            IocIndicator.normalized_value == check.normalized,
+        )
+        .first()
+    )
+    created = row is None
+    if created:
+        row = IocIndicator(
+            ioc_type=ioc_type,
+            ioc_value=check.normalized,
+            normalized_value=check.normalized,
+            created_by=user.username,
+            source_count=1,
+        )
+        db.add(row)
+        db.flush()
+        if ioc_type == "IP":
+            db.add(
+                IocIpDetail(
+                    ioc_id=row.id,
+                    ip_bin=check.ip_bin,
+                    prefix_len=check.prefix_len,
+                    address_family=check.address_family,
+                    cidr=check.cidr,
+                )
+            )
+        else:
+            db.add(
+                IocDomainDetail(
+                    ioc_id=row.id,
+                    match_mode=check.match_mode,
+                    root_domain=check.root_domain,
+                    is_wildcard=1 if check.is_wildcard else 0,
+                )
+            )
+    row.status = "active"
+    row.confidence = body.confidence if body.confidence is not None else row.confidence
+    row.risk_level = body.risk_level or row.risk_level
+    row.expire_at = expire_at or row.expire_at
+    row.tags = body.tags or row.tags
+    row.remark = body.remark or row.remark
+    db.flush()
+
+    write_audit(
+        db, "IOC_CREATE" if created else "IOC_UPDATE",
+        operator=user.username, role_code=user.role_code,
+        target_type=ioc_type, target_id=row.id,
+        content={"value": check.normalized, "dispatch": body.dispatch},
+        client_ip=client_ip(request),
+    )
+
+    task_ids: list[int] = []
+    if body.dispatch:
+        task_ids = create_block_tasks_for_ioc(
+            db, row, operator=user.username, client_ip=client_ip(request)
+        )
+    else:
+        db.commit()
+    return ok({
+        "item": IocOut.model_validate(row).model_dump(mode="json"),
+        "created": created,
+        "task_count": len(task_ids),
+    })
+
+
+def _unblock_ioc(db: Session, row: IocIndicator, request: Request, user: SystemUser) -> int:
+    request_id = f"manual-{uuid.uuid4().hex[:16]}"
+    task_ids: list[int] = []
+    for device in match_devices(db, row.ioc_type, "UNBLOCK"):
+        task = create_task(db, ioc=row, device=device, operation="UNBLOCK", request_id=request_id)
+        if task:
+            task_ids.append(task.id)
+    row.status = "disabled"
+    write_audit(
+        db, "IOC_MANUAL_UNBLOCK", operator=user.username, role_code=user.role_code,
+        target_type=row.ioc_type, target_id=row.id,
+        content={"value": row.normalized_value, "task_count": len(task_ids)},
+        client_ip=client_ip(request),
+    )
+    db.commit()
+    dispatch_tasks(task_ids)
+    return len(task_ids)
+
+
+def _list_ioc(
+    ioc_type: str,
+    db: Session,
+    page: int,
+    page_size: int,
+    status: str | None,
+    keyword: str | None,
+):
+    stmt = select(IocIndicator).where(IocIndicator.ioc_type == ioc_type)
+    if status:
+        stmt = stmt.where(IocIndicator.status == status)
+    if keyword:
+        stmt = stmt.where(
+            or_(
+                IocIndicator.normalized_value.like(f"%{keyword}%"),
+                IocIndicator.remark.like(f"%{keyword}%"),
+            )
+        )
+    stmt = stmt.order_by(IocIndicator.created_at.desc())
+    rows, total = paginate(stmt, db, page, page_size)
+    return ok({
+        "items": [IocOut.model_validate(r).model_dump(mode="json") for r in rows],
+        "total": total, "page": page, "page_size": page_size,
+    })
+
+
+@router.get("/ioc/ips")
+def list_ip_ioc(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+    status: str | None = None,
+    keyword: str | None = None,
+    db: Session = Depends(get_db),
+    _=Depends(require_perms("ioc:read")),
+):
+    return _list_ioc("IP", db, page, page_size, status, keyword)
+
+
+@router.post("/ioc/ips")
+def create_ip_ioc(
+    body: IocCreateIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: SystemUser = Depends(require_perms("ioc:*")),
+):
+    return _create_ioc("IP", body, request, db, user)
+
+
+@router.get("/ioc/ips/{ioc_id}")
+def get_ip_ioc(
+    ioc_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(require_perms("ioc:read")),
+):
+    return ok(IocOut.model_validate(_get_ioc(db, ioc_id, "IP")).model_dump(mode="json"))
+
+
+@router.put("/ioc/ips/{ioc_id}")
+def update_ip_ioc(
+    ioc_id: int,
+    body: IocUpdateIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: SystemUser = Depends(require_perms("ioc:*")),
+):
+    row = _get_ioc(db, ioc_id, "IP")
+    for field in ("confidence", "risk_level", "expire_at", "tags", "remark", "status"):
+        value = getattr(body, field)
+        if value is not None:
+            setattr(row, field, value)
+    write_audit(
+        db, "IOC_UPDATE", operator=user.username, role_code=user.role_code,
+        target_type="IP", target_id=row.id,
+        content=body.model_dump(exclude_none=True, mode="json"), client_ip=client_ip(request),
+    )
+    db.commit()
+    return ok(IocOut.model_validate(row).model_dump(mode="json"))
+
+
+@router.delete("/ioc/ips/{ioc_id}")
+def delete_ip_ioc(
+    ioc_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: SystemUser = Depends(require_perms("ioc:*")),
+):
+    row = _get_ioc(db, ioc_id, "IP")
+    task_count = _unblock_ioc(db, row, request, user)
+    return ok({"id": ioc_id, "unblock_task_count": task_count})
+
+
+@router.get("/ioc/domains")
+def list_domain_ioc(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+    status: str | None = None,
+    keyword: str | None = None,
+    db: Session = Depends(get_db),
+    _=Depends(require_perms("ioc:read")),
+):
+    return _list_ioc("DOMAIN", db, page, page_size, status, keyword)
+
+
+@router.post("/ioc/domains")
+def create_domain_ioc(
+    body: IocCreateIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: SystemUser = Depends(require_perms("ioc:*")),
+):
+    return _create_ioc("DOMAIN", body, request, db, user)
+
+
+@router.get("/ioc/domains/{ioc_id}")
+def get_domain_ioc(
+    ioc_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(require_perms("ioc:read")),
+):
+    return ok(IocOut.model_validate(_get_ioc(db, ioc_id, "DOMAIN")).model_dump(mode="json"))
+
+
+@router.delete("/ioc/domains/{ioc_id}")
+def delete_domain_ioc(
+    ioc_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: SystemUser = Depends(require_perms("ioc:*")),
+):
+    row = _get_ioc(db, ioc_id, "DOMAIN")
+    task_count = _unblock_ioc(db, row, request, user)
+    return ok({"id": ioc_id, "unblock_task_count": task_count})
+
+
+@router.get("/whitelist/ips")
+def list_whitelist(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=200),
+    keyword: str | None = None,
+    db: Session = Depends(get_db),
+    _=Depends(require_perms("whitelist:read")),
+):
+    stmt = select(IpWhitelist)
+    if keyword:
+        stmt = stmt.where(IpWhitelist.ip_value.like(f"%{keyword}%"))
+    stmt = stmt.order_by(IpWhitelist.created_at.desc())
+    rows, total = paginate(stmt, db, page, page_size)
+    return ok({
+        "items": [WhitelistOut.model_validate(r).model_dump(mode="json") for r in rows],
+        "total": total, "page": page, "page_size": page_size,
+    })
+
+
+@router.get("/whitelist/ips/check")
+def check_whitelist_api(
+    ip: str = Query(..., min_length=2, max_length=64),
+    db: Session = Depends(get_db),
+    _=Depends(require_perms("whitelist:read")),
+):
+    hit, matched = check_whitelist(db, ip)
+    return ok(WhitelistCheckOut(ip=ip, whitelisted=hit, matched=matched).model_dump())
+
+
+@router.post("/whitelist/ips")
+def create_whitelist(
+    body: WhitelistCreateIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: SystemUser = Depends(require_perms("whitelist:*")),
+):
+    ip_value, cidr, ip_bin, prefix_len, cidr_flag = _parse_whitelist(body.ip_value)
+    row = (
+        db.query(IpWhitelist)
+        .filter(IpWhitelist.ip_value == ip_value, IpWhitelist.prefix_len == prefix_len)
+        .first()
+    )
+    created = row is None
+    if created:
+        row = IpWhitelist(
+            ip_value=ip_value, cidr=cidr, ip_bin=ip_bin, prefix_len=prefix_len,
+            cidr_flag=cidr_flag, status=1, created_by=user.username,
+        )
+        db.add(row)
+    row.remark = body.remark or row.remark
+    row.status = 1
+    db.flush()
+
+    write_audit(
+        db, "WHITELIST_CREATE", operator=user.username, role_code=user.role_code,
+        target_type="IP", target_id=cidr or ip_value,
+        content={"unblock_existing": body.unblock_existing}, client_ip=client_ip(request),
+    )
+    task_count = 0
+    if body.unblock_existing:
+        task_count = unblock_existing_for_whitelist(
+            db, cidr or ip_value, operator=user.username, client_ip=client_ip(request)
+        )
+    else:
+        db.commit()
+    return ok({
+        "item": WhitelistOut.model_validate(row).model_dump(mode="json"),
+        "created": created,
+        "unblock_task_count": task_count,
+    })
+
+
+@router.post("/whitelist/ips/import")
+def import_whitelist(
+    body: WhitelistImportIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: SystemUser = Depends(require_perms("whitelist:*")),
+):
+    created, skipped, errors = 0, 0, []
+    for line_no, line in enumerate(body.text.splitlines(), start=1):
+        entry = line.split("#", 1)[0].strip()
+        if not entry:
+            continue
+        try:
+            ip_value, cidr, ip_bin, prefix_len, cidr_flag = _parse_whitelist(entry)
+        except BizError as exc:
+            errors.append(f"第 {line_no} 行: {exc.msg}")
+            continue
+        exists = (
+            db.query(IpWhitelist)
+            .filter(IpWhitelist.ip_value == ip_value, IpWhitelist.prefix_len == prefix_len)
+            .first()
+        )
+        if exists:
+            skipped += 1
+            continue
+        db.add(
+            IpWhitelist(
+                ip_value=ip_value, cidr=cidr, ip_bin=ip_bin, prefix_len=prefix_len,
+                cidr_flag=cidr_flag, status=1, created_by=user.username,
+                remark="批量导入",
+            )
+        )
+        created += 1
+        unblock_existing_for_whitelist(
+            db, cidr or ip_value, operator=user.username, client_ip=client_ip(request)
+        )
+    write_audit(
+        db, "WHITELIST_IMPORT", operator=user.username, role_code=user.role_code,
+        content={"created": created, "skipped": skipped, "errors": errors},
+        client_ip=client_ip(request),
+    )
+    db.commit()
+    return ok({"created": created, "skipped": skipped, "errors": errors})
+
+
+@router.delete("/whitelist/ips/{wl_id}")
+def delete_whitelist(
+    wl_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: SystemUser = Depends(require_perms("whitelist:*")),
+):
+    row = db.get(IpWhitelist, wl_id)
+    if row is None:
+        raise BizError("白名单记录不存在", 404, 404)
+    write_audit(
+        db, "WHITELIST_DELETE", operator=user.username, role_code=user.role_code,
+        target_type="IP", target_id=row.cidr or row.ip_value, client_ip=client_ip(request),
+    )
+    db.delete(row)
+    db.commit()
+    return ok({"id": wl_id})

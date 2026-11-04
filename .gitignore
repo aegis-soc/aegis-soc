@@ -1,0 +1,49 @@
+# ---------- 凭据与本机配置 ----------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+secrets/
+deploy/secrets/
+deploy/nginx/certs/
+
+# ---------- 内网资产（开源前脱敏检查） ----------
+# 如确需提交示例，请一律使用 RFC5737 文档地址 192.0.2.x / 198.51.100.x / 203.0.113.x
+*real-ip-list*.txt
+*device-inventory*.csv
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+*.db
+*.sqlite3
+
+# ---------- Node ----------
+node_modules/
+dist/
+.vite/
+npm-debug.log*
+yarn-error.log*
+
+# ---------- 运行时 ----------
+*.log
+logs/
+runtime/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# ---------- 原始参考材料（不入库） ----------
+_doc_extract.txt
+*.docx

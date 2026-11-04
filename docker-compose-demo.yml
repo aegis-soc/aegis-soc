@@ -1,0 +1,14 @@
+# Demo 体验模式（v1.1 规划占位）
+
+# 当前 v1.0 请使用生产模式编排：docker compose up -d
+# 内置的 mock 插件 + docs/graylog-config-guide.md 中的 curl 样例
+# 已可完整演示「告警 → 策略 → 任务 → 下发 → 到期解封」闭环，无需拉起 Graylog。
+#
+# v1.1 将在此文件追加以下服务，实现一键全套演示环境：
+#   graylog / elasticsearch / mongodb + 内置 WAF 告警样例 Event Definition
+#   并通过 GRAYLOG_WEBHOOK_SECRET 自动对接本平台
+#
+# 仅用于本地测试演示，禁止上生产：容器版 Graylog 未做性能调优。
+
+include:
+  - docker-compose.yml
