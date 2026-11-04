@@ -22,7 +22,7 @@ jobs:
         working-directory: backend
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: 准备 Python 3.12
         uses: actions/setup-python@v5
@@ -50,7 +50,7 @@ jobs:
         working-directory: frontend
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: 准备 Node 20
         uses: actions/setup-node@v4
@@ -77,7 +77,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: 生成临时 .env
         run: cp .env.example .env
