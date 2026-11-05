@@ -76,6 +76,7 @@ def _percent_encode(value: Any) -> str:
 class AliyunWafV3Plugin(BasePlugin):
     plugin_code = "aliyun_waf_v3"
     plugin_name = "阿里云 WAF 3.0"
+    credential_hint = "ALIYUN_WAF_AK"   # 值为 {"access_key_id":"...","access_key_secret":"..."}
     version = "1.0.0"
     ioc_types = ["IP"]
     capabilities = ["BLOCK", "UNBLOCK"]

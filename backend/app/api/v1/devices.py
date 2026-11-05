@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.common import BizError, client_ip, ok, paginate
 from app.database import get_db, utcnow
 from app.deps import require_perms
-from app.engines.validation import resolve_device_config
+from app.engines.validation import apply_credential, resolve_device_config
 from app.models import DeviceCapability, DevicePlugin, SecurityDevice, SystemUser
 from app.schemas import DeviceCreateIn, DeviceOut, DeviceUpdateIn, PluginOut, PluginTestIn
 from app.services.audit import write_audit
@@ -211,7 +211,7 @@ def test_plugin(
     db: Session = Depends(get_db),
     user: SystemUser = Depends(require_perms("plugin:*")),
 ):
-    config = dict(body.config_json or {})
+    config = apply_credential(dict(body.config_json or {}))
     plugin_code = body.plugin_code
     if body.device_id:
         device = db.get(SecurityDevice, body.device_id)

@@ -168,6 +168,8 @@ class DeviceCreateIn(BaseModel):
 
 class DeviceUpdateIn(BaseModel):
     name: str | None = None
+    vendor: str | None = None
+    model: str | None = None
     region: str | None = None
     config_json: dict[str, Any] | None = None
     credential_ref: str | None = None

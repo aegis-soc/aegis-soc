@@ -31,6 +31,7 @@ SUCCESS_WORDS = {"success", "ok", "0", "true"}
 class QimingFwPlugin(BasePlugin):
     plugin_code = "qiming_fw"
     plugin_name = "启明星辰 天清汉马 USG"
+    credential_hint = "QIMING_FW_PASSWORD"   # 设备登录口令
     version = "1.0.0"
     ioc_types = ["IP"]
     capabilities = ["BLOCK", "UNBLOCK"]

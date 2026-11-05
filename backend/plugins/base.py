@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
@@ -30,6 +31,120 @@ class PluginResult:
         }
 
 
+# 配置字段的中文名：界面向导据此渲染表单，只有 credential_ref 不出现在表单里
+FIELD_LABELS: dict[str, str] = {
+    "base_url": "设备地址",
+    "host": "设备地址",
+    "endpoint": "服务地址",
+    "region_id": "地域",
+    "port": "端口",
+    "timeout": "超时（秒）",
+    "verify_ssl": "校验 TLS 证书",
+    "username": "账号",
+    "instance_id": "WAF 实例 ID",
+    "template_id": "模板 ID",
+    "rule_name": "规则名",
+    "action": "动作",
+    "max_entries": "单规则上限",
+    "max_rules": "分片上限",
+    "auto_create_rule": "自动建规则",
+    "method": "请求方法",
+    "headers": "请求头",
+    "body_template": "请求体模板",
+    "mode": "运行模式",
+    "vsys": "虚拟系统",
+    "tag_name": "标签名",
+    "login_path": "登录路径",
+    "login_body": "登录报文",
+    "token_path": "Token 路径",
+    "token_header": "Token 头",
+    "token_prefix": "Token 前缀",
+    "block_path": "封禁路径",
+    "unblock_path": "解封路径",
+    "block_body": "封禁报文",
+    "unblock_body": "解封报文",
+    "save_path": "保存生效路径",
+    "block_type": "封禁类型",
+    "end_time_minutes": "封禁时长（分钟）",
+    "enable": "启用策略",
+    "protocol": "协议",
+    "src_port": "源端口",
+    "dst_ip": "目的 IP",
+    "dst_port": "目的端口",
+    "password_hash": "口令摘要方式",
+    "sha256_uppercase": "摘要大写",
+    "token_ttl": "Token 缓存（秒）",
+    "vendor": "厂商型号",
+    "timeout_minutes": "封禁时长（分钟）",
+}
+
+# 只能由 credential_ref 注入的字段，界面不渲染，也禁止写进数据库
+SECRET_FIELD_KEYS = {"credential_ref", "password", "secret", "api_key", "access_key_id", "access_key_secret"}
+
+# 归入「设备连接」分组的字段，其余归「业务参数」
+CONNECTION_FIELD_KEYS = {
+    "host", "base_url", "endpoint", "region_id", "port", "verify_ssl", "timeout", "username",
+}
+
+_DEFAULT_RE = re.compile(r"默认\s*([^，,；;）)\s]+)")
+
+
+def _field_type(text: str) -> tuple[str, list[str]]:
+    """从 `int（默认 10）` 这类说明里解析出控件类型与枚举选项。"""
+    head = str(text or "").split("（")[0].split("(")[0].strip().strip("`")
+    if head in {"string", "int", "bool", "float", "object", "list"}:
+        return head, []
+    if "|" in head:
+        return "enum", [part.strip().strip("`") for part in head.split("|") if part.strip()]
+    return "string", []
+
+
+def _field_default(text: str, ftype: str, options: list[str]) -> Any:
+    match = _DEFAULT_RE.search(str(text or ""))
+    if not match:
+        return None
+    raw = match.group(1).strip().strip("\"'`")
+    if ftype == "bool":
+        return as_bool(raw, False)
+    if ftype in {"int", "float"}:
+        try:
+            return int(raw) if ftype == "int" else float(raw)
+        except ValueError:
+            return None
+    if ftype == "enum":
+        return raw if raw in options else None
+    return raw
+
+
+def build_config_fields(schema: dict[str, str], required: list[str]) -> list[dict[str, Any]]:
+    """把插件的 config_schema 变成前端可直接渲染的字段描述。
+
+    每个字段带：key / label / group / type / required / options / default / description。
+    界面不需要认识任何插件细节，新增插件自动获得可视化表单。
+    """
+    fields: list[dict[str, Any]] = []
+    for key, text in schema.items():
+        if key in SECRET_FIELD_KEYS:
+            continue
+        ftype, options = _field_type(text)
+        fields.append(
+            {
+                "key": key,
+                "label": FIELD_LABELS.get(key, key),
+                "group": "connection" if key in CONNECTION_FIELD_KEYS else "params",
+                "type": ftype,
+                "required": key in required or "必填" in str(text),
+                "options": options,
+                "default": _field_default(text, ftype, options),
+                "description": str(text),
+                "address": key in {"host", "base_url", "endpoint"},
+            }
+        )
+    # 设备地址排最前，其次连接类，最后业务参数
+    fields.sort(key=lambda f: (0 if f["address"] else 1 if f["group"] == "connection" else 2))
+    return fields
+
+
 @dataclass
 class Manifest:
     plugin_code: str
@@ -39,12 +154,17 @@ class Manifest:
     capabilities: list[str] = field(default_factory=lambda: ["BLOCK", "UNBLOCK"])
     config_schema: dict[str, str] = field(default_factory=dict)
     description: str = ""
+    required_config: list[str] = field(default_factory=list)
+    credential_hint: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "ioc_types": self.ioc_types,
             "capabilities": self.capabilities,
             "config_schema": self.config_schema,
+            "required_config": self.required_config,
+            "credential_hint": self.credential_hint,
+            "config_fields": build_config_fields(self.config_schema, self.required_config),
             "description": self.description,
         }
 
@@ -78,6 +198,8 @@ class BasePlugin(ABC):
     config_schema: dict[str, str] = {}
     # 必填配置键：为空则跳过校验；口令类字段由 credential_ref 注入，也需在此声明
     required_config: list[str] = []
+    # 界面「凭据环境变量」的建议名字，仅为填空提示，不参与鉴权
+    credential_hint: str = ""
     description: str = ""
     default_timeout: int = 10
 
@@ -114,6 +236,8 @@ class BasePlugin(ABC):
             capabilities=list(self.capabilities),
             config_schema=dict(self.config_schema),
             description=self.description,
+            required_config=list(self.required_config),
+            credential_hint=self.credential_hint,
         )
 
     @abstractmethod

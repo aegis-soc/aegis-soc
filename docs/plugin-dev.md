@@ -126,6 +126,33 @@ MY_DEVICE_CRED='{"api_key":"your-real-key"}'
 > 它们各自有独立的地址、参数与凭据；策略派发时一个 IOC 会按设备逐台生成任务。
 > 执行链路：`DeviceTarget(设备) + ActionRequest(IOC/动作)` → `registry.execute(target, req)` → 插件方法。
 
+### 步骤 4.5：界面表单自动生成（不用改前端）
+
+设备弹窗不写死任何字段，全部由 `config_schema` 推导（`plugins/base.py: build_config_fields`）。
+因此新插件只要把 `config_schema` 写规范，界面立刻有对应的可视化表单：
+
+| 你写的 | 界面表现 |
+|---|---|
+| `"base_url": "string（必填，https://<管理口>）"` | 「设备地址」文本框，标必填，下方显示「https://<管理口>」 |
+| `"template_id": "int（必填，模板 ID）"` | 数字输入框 |
+| `"verify_ssl": "bool（默认 false）"` | 开关，默认关闭 |
+| `"vendor": "h3c | huawei（默认 h3c）"` | 下拉框，选项 h3c / huawei |
+| `"headers": "object（请求头）"` | 多行 JSON 文本框 |
+| 键名属于 `host/base_url/endpoint/region_id/port/verify_ssl/timeout/username` | 归入「① 设备连接」并置顶 |
+| 其余键名 | 归入「② 业务参数」 |
+| 说明里含「必填」或在 `required_config` 中 | 标红星并在保存前校验 |
+| 说明里含「默认 xxx」 | 预填为默认值 |
+
+三条约定：
+
+1. **类型写在说明最前面**，格式 `类型（说明）`，类型只认 `string / int / bool / float / object / list`，
+   或用 `a | b` 表示枚举；
+2. **`credential_ref`、`password`、`api_key`、`access_key_secret` 等凭据字段不要出现在 `config_schema`**，
+   界面不会渲染，它们只能由 `credential_ref` 指向的环境变量注入；
+3. 声明 `credential_hint`（如 `QIMING_IPS_PASSWORD`），界面会把它作为「凭据环境变量」的占位提示。
+
+字段中文名在 `FIELD_LABELS` 里登记；未登记的键名直接显示原始键名，不会报错。
+
 ### 步骤 5：测试与验收
 
 - 「设备管理 → 连通性测试」验证 `test_connection`；

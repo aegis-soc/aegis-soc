@@ -36,6 +36,7 @@ ERROR_MARKERS = (
 class SshFirewallPlugin(BasePlugin):
     plugin_code = "ssh_firewall"
     plugin_name = "SSH 防火墙（H3C / 华为）"
+    credential_hint = "FW_PASSWORD"   # SSH 口令，写入 .env 后在此填变量名
     version = "1.0.0"
     ioc_types = ["IP"]
     capabilities = ["BLOCK", "UNBLOCK"]

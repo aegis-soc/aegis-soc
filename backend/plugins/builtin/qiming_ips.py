@@ -51,6 +51,7 @@ class QimingIpsError(Exception):
 class QimingIpsPlugin(BasePlugin):
     plugin_code = "qiming_ips"
     plugin_name = "启明星辰 天清IPS"
+    credential_hint = "QIMING_IPS_PASSWORD"   # 登录口令明文，插件内部做 SHA256
     version = "1.0.0"
     ioc_types = ["IP", "DOMAIN"]
     # 未提供删除/查询封堵策略的接口文档，不声明 UNBLOCK，避免"解封成功"其实没生效

@@ -19,6 +19,7 @@ from plugins.context import ActionRequest, DeviceTarget
 class HttpGenericPlugin(BasePlugin):
     plugin_code = "http_generic"
     plugin_name = "通用 HTTP 设备"
+    credential_hint = "HTTP_DEVICE_KEY"   # 值为 {"api_key":"..."} 或口令字符串
     version = "1.0.0"
     ioc_types = ["IP", "DOMAIN"]
     capabilities = ["BLOCK", "UNBLOCK", "QUERY"]

@@ -32,6 +32,7 @@ API_PATH = "/api/"
 class PaloAltoFwPlugin(BasePlugin):
     plugin_code = "paloalto_fw"
     plugin_name = "Palo Alto PAN-OS"
+    credential_hint = "PA_API_KEY"   # 值为 {"api_key":"..."}
     version = "1.0.0"
     ioc_types = ["IP"]
     capabilities = ["BLOCK", "UNBLOCK"]

@@ -162,21 +162,32 @@ def match_devices(
     return [d for d in candidates if d.id in allowed]
 
 
+def apply_credential(config: dict[str, Any], ref: str | None = None) -> dict[str, Any]:
+    """把 credential_ref 指向的环境变量合并进配置。
+
+    供两处复用：设备执行前解析，以及界面在「保存设备之前」点测试连接。
+    变量值为 JSON 对象则逐键合并，否则整体当作 password；变量缺失不抛异常，
+    只写入 `_credential_missing`，由插件统一转成「凭据环境变量 XXX 未设置」。
+    """
+    merged: dict[str, Any] = dict(config or {})
+    name = (ref or merged.pop("credential_ref", "") or "").strip()
+    if not name:
+        return merged
+    secret = os.getenv(name)
+    if secret:
+        try:
+            parsed = json.loads(secret)
+            if isinstance(parsed, dict):
+                merged.update(parsed)
+            else:
+                merged["password"] = str(parsed)
+        except json.JSONDecodeError:
+            merged["password"] = secret
+    else:
+        merged["_credential_missing"] = name
+    return merged
+
+
 def resolve_device_config(device: SecurityDevice) -> dict[str, Any]:
     """合并插件配置与凭据引用；凭据只从环境变量读取，绝不落库、绝不写日志。"""
-    config: dict[str, Any] = dict(device.config_json or {})
-    ref = (device.credential_ref or "").strip()
-    if ref:
-        secret = os.getenv(ref)
-        if secret:
-            try:
-                parsed = json.loads(secret)
-                if isinstance(parsed, dict):
-                    config.update(parsed)
-                else:
-                    config["password"] = str(parsed)
-            except json.JSONDecodeError:
-                config["password"] = secret
-        else:
-            config["_credential_missing"] = ref
-    return config
+    return apply_credential(dict(device.config_json or {}), device.credential_ref)

@@ -31,6 +31,7 @@ APPLY_PATH = "/api/index/applyconfig"
 class SangforIpsPlugin(BasePlugin):
     plugin_code = "sangfor_ips"
     plugin_name = "深信服 IPS 全局黑名单"
+    credential_hint = "SANGFOR_IPS_CRED"   # 值为 {"username":"api","password":"..."}
     version = "1.0.0"
     ioc_types = ["IP"]
     capabilities = ["BLOCK", "UNBLOCK"]

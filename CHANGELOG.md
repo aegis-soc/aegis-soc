@@ -25,6 +25,10 @@
 
 ### Changed
 
+- **设备配置改成可视化表单**：选择插件后，界面按插件的 `config_schema` 自动生成表单——地址类字段置顶为「① 设备连接」，业务参数归「② 业务参数」，`int` 渲染数字框、`bool` 渲染开关、`a | b` 渲染下拉、`object` 渲染 JSON 输入；说明里的「必填」「默认 xxx」自动转成校验与预填值；保留「高级模式」可切回原始 JSON 双向同步；设备列表新增「设备地址」列与「编辑」按钮；弹窗内新增「测试连接」，保存前即可验证地址与凭据
+- **后端新增结构化字段描述** `build_config_fields()`（`plugins/base.py`）：由 `config_schema` + `required_config` 推导 `key / label / group / type / required / options / default / description`，`/api/v1/plugins` 直接返回，新增插件无需改前端；凭据类字段（`credential_ref`/`password`/`api_key`/`access_key_secret`）从表单中剔除
+- **凭据解析抽出 `apply_credential()`**：`/plugins/test` 支持在设备保存前按 `credential_ref` 读取环境变量，未设置时返回「凭据环境变量 XXX 未设置」而不是 500
+- `DeviceUpdateIn` 支持修改 `vendor` / `model`
 - **插件执行接口升级为「设备 + 请求」**（v1.1 P1）：新增 `DeviceTarget`（一台具体设备：`code`/`address`/三层配置/`limits`）与 `ActionRequest`（IOC 与动作），插件方法统一为 `block(target, req)` / `unblock(target, req)` / `query_status(target, req)`；`registry.execute(target, req)` 为推荐入口，旧签名 `execute(code, op, ioc, ioc_type, config)` 仍兼容
 - **设备配置分三层**：`connection`（地址/端口/TLS/超时）、`params`（业务参数）、`secrets`（凭据），支持 `{"connection":{...},"params":{...}}` 分层写法与历史扁平写法混用；合并优先级 `params < connection < secrets`，凭据永远最后覆盖
 - 8 个内置插件全部迁移到新签名；worker 执行时按设备构造 `DeviceTarget`，日志输出 `task / device / plugin / op / ioc / 结果`，排查可直接定位到设备
