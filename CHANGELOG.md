@@ -17,6 +17,12 @@
 
 ### Changed
 
+- **插件层不再"假成功"**：`BasePlugin.query_status()` 默认由返回成功改为返回失败（未实现即失败）；SSH 插件改为校验设备回显，命中 `% Invalid input` / `Unrecognized command` / `Permission denied` 等特征或提示符超时时判失败；深信服插件校验 `applyconfig` 生效结果，接口成功但配置未生效时判失败
+- **插件配置统一校验**：新增 `required_config` 与 `BasePlugin.validate_config()`，`execute()` 与连通性测试前统一校验必填项与 `credential_ref` 注入结果，缺项返回「插件配置错误」而非设备侧报错
+- **连通性测试不再 500**：新增 `BasePlugin.safe_test_connection()`，`POST /plugins/test` 与设备连通性测试遇到的任何异常都收敛为结构化失败结果
+- 插件注册时校验能力声明：`capabilities` 出现未知动作直接拒绝启动，避免 manifest 与实现不一致
+- 布尔/整数配置统一走 `as_bool()` / `as_int()`，修复字符串 `"false"` 被当成 True（自签证书设备 SSL 校验失效）的问题
+- `docs/plugin-dev.md` 补充 `required_config` 用法与"不得假成功"硬性规范；新增 `backend/tests/test_plugins.py` 12 项回归测试
 - 前端镜像构建改为 `npm ci`（严格按 `package-lock.json`），镜像构建可复现
 - 项目正式命名为「宙斯盾 AegisSoc」，定位升级为**通用安全运营自动化 AI+SOC 平台**
 - 仓库名、Compose 项目名、数据库名 / 用户名、Celery 队列与任务名、Redis 键前缀、logger 名、npm 包名中的旧项目标识统一迁移为 `aegis*`

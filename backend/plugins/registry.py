@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from plugins.base import BasePlugin, PluginResult
+from plugins.base import VALID_OPERATIONS, BasePlugin, PluginResult
 
 logger = logging.getLogger("aegis")
 _plugins: dict[str, BasePlugin] = {}
@@ -20,6 +20,15 @@ def register(plugin: BasePlugin | type[BasePlugin]) -> None:
         raise ValueError("插件必须声明 plugin_code")
     if instance.plugin_code in _plugins:
         raise ValueError(f"插件重复注册: {instance.plugin_code}")
+    unknown = set(instance.capabilities) - VALID_OPERATIONS
+    if unknown:
+        raise ValueError(
+            f"插件 {instance.plugin_code} 声明了非法能力: {', '.join(sorted(unknown))}"
+        )
+    if not instance.capabilities:
+        raise ValueError(f"插件 {instance.plugin_code} 必须至少声明一项能力")
+    if not instance.ioc_types:
+        raise ValueError(f"插件 {instance.plugin_code} 必须声明 ioc_types")
     _plugins[instance.plugin_code] = instance
     logger.debug("插件已注册: %s", instance.plugin_code)
 
@@ -77,7 +86,7 @@ def test_plugin(code: str, config: dict[str, Any]) -> dict[str, Any]:
     plugin = get(code)
     if plugin is None:
         return {"success": False, "message": f"插件未注册: {code}", "raw": ""}
-    return plugin.test_connection(config or {}).to_dict()
+    return plugin.safe_test_connection(config or {}).to_dict()
 
 
 def execute(

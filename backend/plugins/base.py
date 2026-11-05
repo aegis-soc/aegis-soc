@@ -51,6 +51,22 @@ class PluginConfigError(Exception):
     """插件配置缺失或非法（不构成任务失败重试的硬件故障，直接判定失败并留痕）。"""
 
 
+def as_bool(value: Any, default: bool = False) -> bool:
+    """把 JSON / 表单里的各种写法统一成 bool，避免字符串 "false" 被当成 True。"""
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "y"}
+
+
+def as_int(value: Any, default: int) -> int:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
 class BasePlugin(ABC):
     plugin_code: str = ""
     plugin_name: str = ""
@@ -58,8 +74,34 @@ class BasePlugin(ABC):
     ioc_types: list[str] = ["IP"]
     capabilities: list[str] = ["BLOCK", "UNBLOCK"]
     config_schema: dict[str, str] = {}
+    # 必填配置键：为空则跳过校验；口令类字段由 credential_ref 注入，也需在此声明
+    required_config: list[str] = []
     description: str = ""
     default_timeout: int = 10
+
+    def validate_config(self, config: dict[str, Any]) -> None:
+        """检查必填项与凭据注入结果，缺失即抛 PluginConfigError（不重试、直接留痕）。"""
+        missing_credential = str(config.get("_credential_missing") or "").strip()
+        if missing_credential:
+            raise PluginConfigError(
+                f"凭据环境变量 {missing_credential} 未设置或为空，无法取得口令"
+            )
+        missing = [
+            key for key in self.required_config
+            if not str(config.get(key) or "").strip()
+        ]
+        if missing:
+            raise PluginConfigError(f"缺少必填配置: {', '.join(missing)}")
+
+    def safe_test_connection(self, config: dict[str, Any]) -> PluginResult:
+        """连通性测试的安全封装：任何异常都收敛为失败结果，绝不向上冒泡成 HTTP 500。"""
+        try:
+            self.validate_config(config or {})
+            return self.test_connection(config or {})
+        except PluginConfigError as exc:
+            return PluginResult(False, f"插件配置错误: {exc}")
+        except Exception as exc:  # noqa: BLE001
+            return PluginResult(False, f"连通性测试异常: {exc.__class__.__name__}: {exc}")
 
     def manifest(self) -> Manifest:
         return Manifest(
@@ -85,7 +127,12 @@ class BasePlugin(ABC):
         """下发解封。"""
 
     def query_status(self, ioc_value: str, ioc_type: str, config: dict[str, Any]) -> PluginResult:
-        return PluginResult(True, "该插件未实现状态查询，默认返回成功", raw="")
+        """默认不实现状态查询：必须显式返回失败，避免伪造“查询成功”。"""
+        return PluginResult(
+            False,
+            f"插件 {self.plugin_code} 未实现状态查询（QUERY）",
+            raw="",
+        )
 
     def execute(
         self,
@@ -107,6 +154,7 @@ class BasePlugin(ABC):
             "QUERY": self.query_status,
         }[operation]
         try:
+            self.validate_config(config)
             return handler(ioc_value, ioc_type, config)
         except PluginConfigError as exc:
             return PluginResult(False, f"插件配置错误: {exc}")

@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 import requests
 import urllib3
 
-from plugins.base import BasePlugin, PluginConfigError, PluginResult
+from plugins.base import BasePlugin, PluginConfigError, PluginResult, as_bool, as_int
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -42,6 +42,7 @@ class SangforIpsPlugin(BasePlugin):
         "verify_ssl": "bool（默认 false，设备多为自签证书）",
         "timeout": "int（秒，默认 10）",
     }
+    required_config = ["base_url", "username"]
     default_timeout = 10
 
     @staticmethod
@@ -50,13 +51,14 @@ class SangforIpsPlugin(BasePlugin):
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     def _session(self, config: dict[str, Any]) -> tuple[requests.Session, str, str]:
+        self.validate_config(config)
         base_url = str(config.get("base_url") or "").rstrip("/")
         username = str(config.get("username") or "")
         password = str(config.get("password") or config.get("secret") or "")
-        if not base_url or not username or not password:
-            raise PluginConfigError("缺少 base_url / username / password（请通过 credential_ref 注入）")
-        verify = bool(config.get("verify_ssl", False))
-        timeout = int(config.get("timeout") or self.default_timeout)
+        if not password:
+            raise PluginConfigError("缺少 password（请通过 credential_ref 注入）")
+        verify = as_bool(config.get("verify_ssl"), False)
+        timeout = as_int(config.get("timeout"), self.default_timeout)
         session = requests.Session()
         login_body = json.dumps({"username": username, "password": password, "lang": "zh_CN"})
         response = session.post(
@@ -76,15 +78,28 @@ class SangforIpsPlugin(BasePlugin):
         base_url = str(config["base_url"]).rstrip("/")
         return f"{base_url}{path}?sign={sign}&apikey={api_key}&time={timestamp_ms}"
 
-    def _apply(self, session: requests.Session, config: dict[str, Any], sk: str, ak: str) -> None:
-        verify = bool(config.get("verify_ssl", False))
-        timeout = int(config.get("timeout") or self.default_timeout)
+    def _apply(self, session: requests.Session, config: dict[str, Any], sk: str, ak: str) -> tuple[bool, str]:
+        """配置生效（applyconfig）。返回 (是否成功, 说明)：未生效等于黑名单没落地，必须判失败。"""
+        verify = as_bool(config.get("verify_ssl"), False)
+        timeout = as_int(config.get("timeout"), self.default_timeout)
         url = self._signed_url(config, sk, ak, APPLY_PATH)
-        session.post(url, data=b"", verify=verify, timeout=timeout)
+        try:
+            response = session.post(url, data=b"", verify=verify, timeout=timeout)
+        except requests.RequestException as exc:
+            return False, f"配置生效请求失败: {exc.__class__.__name__}"
+        if response.status_code >= 300:
+            return False, f"配置生效失败 HTTP {response.status_code}"
+        try:
+            payload = response.json()
+        except ValueError:
+            return True, ""
+        if isinstance(payload, dict) and "fail" in str(payload.get("message", "")).lower():
+            return False, f"配置生效失败: {str(payload.get('message'))[:120]}"
+        return True, ""
 
     def _logout(self, session: requests.Session, config: dict[str, Any], sk: str, ak: str) -> None:
         try:
-            verify = bool(config.get("verify_ssl", False))
+            verify = as_bool(config.get("verify_ssl"), False)
             session.get(
                 self._signed_url(config, sk, ak, LOGOUT_PATH),
                 verify=verify, timeout=5,
@@ -94,8 +109,8 @@ class SangforIpsPlugin(BasePlugin):
 
     def _act(self, operation: str, ioc_value: str, config: dict[str, Any]) -> PluginResult:
         session, sk, ak = self._session(config)
-        verify = bool(config.get("verify_ssl", False))
-        timeout = int(config.get("timeout") or self.default_timeout)
+        verify = as_bool(config.get("verify_ssl"), False)
+        timeout = as_int(config.get("timeout"), self.default_timeout)
         try:
             action = "insert" if operation == "BLOCK" else "delete"
             body = json.dumps(
@@ -114,7 +129,7 @@ class SangforIpsPlugin(BasePlugin):
             )
             url = self._signed_url(config, sk, ak, BLACKLIST_PATH)
             response = session.post(url, data=body.encode("utf-8"), verify=verify, timeout=timeout)
-            self._apply(session, config, sk, ak)
+            applied, apply_message = self._apply(session, config, sk, ak)
             try:
                 payload = response.json()
                 message = str(payload.get("message", ""))
@@ -122,6 +137,13 @@ class SangforIpsPlugin(BasePlugin):
             except ValueError:
                 success = response.status_code < 300
                 message = response.text[:200]
+            if success and not applied:
+                return PluginResult(
+                    False,
+                    f"黑名单接口返回成功，但{apply_message or '配置未生效'}，封禁实际未落地",
+                    raw=response.text[:4000],
+                    http_status=response.status_code,
+                )
             return PluginResult(
                 success,
                 message or f"HTTP {response.status_code}",

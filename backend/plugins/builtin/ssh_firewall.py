@@ -12,7 +12,24 @@ from typing import Any
 
 import paramiko
 
-from plugins.base import BasePlugin, PluginConfigError, PluginResult
+from plugins.base import BasePlugin, PluginConfigError, PluginResult, as_int
+
+# 设备 CLI 拒绝执行时常见的回显特征（小写匹配）
+ERROR_MARKERS = (
+    "error:",
+    "% invalid",
+    "% incomplete",
+    "% wrong",
+    "% unrecognized",
+    "% permission denied",
+    "unrecognized command",
+    "incomplete command",
+    "wrong parameter",
+    "invalid input",
+    "permission denied",
+    "authentication failed",
+    "too many",
+)
 
 
 class SshFirewallPlugin(BasePlugin):
@@ -31,6 +48,7 @@ class SshFirewallPlugin(BasePlugin):
         "vendor": "h3c | huawei（默认 h3c）",
         "timeout_minutes": "int（封禁时长，默认 120）",
     }
+    required_config = ["host", "username"]
     default_timeout = 15
 
     def _connect(self, config: dict[str, Any]) -> paramiko.SSHClient:
@@ -44,18 +62,22 @@ class SshFirewallPlugin(BasePlugin):
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         client.connect(
             host,
-            port=int(config.get("port") or 22),
+            port=as_int(config.get("port"), 22),
             username=username,
             password=password,
-            timeout=int(config.get("timeout") or self.default_timeout),
+            timeout=as_int(config.get("timeout"), self.default_timeout),
             allow_agent=False,
             look_for_keys=False,
         )
         return client
 
     @staticmethod
-    def _wait_prompt(shell: paramiko.Channel, suffixes: tuple[str, ...], timeout: float = 12.0) -> str:
+    def _wait_prompt(
+        shell: paramiko.Channel, suffixes: tuple[str, ...], timeout: float = 12.0
+    ) -> tuple[str, bool]:
+        """读取回显直到出现预期提示符；返回 (文本, 是否等到提示符)。"""
         buffer = b""
+        matched = False
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
@@ -67,30 +89,39 @@ class SshFirewallPlugin(BasePlugin):
             buffer += chunk
             text = buffer.decode("utf-8", errors="ignore").rstrip()
             if any(text.endswith(suffix) for suffix in suffixes):
+                matched = True
                 break
-        return buffer.decode("utf-8", errors="ignore")
+        return buffer.decode("utf-8", errors="ignore"), matched
 
-    def _send(self, config: dict[str, Any], commands: list[str]) -> str:
+    def _send(self, config: dict[str, Any], commands: list[str]) -> tuple[str, bool]:
+        """下发命令并回读；返回 (完整回显, 是否正常进入系统视图并完成下发)。"""
         client = self._connect(config)
         output = ""
+        ok = True
         try:
             shell = client.invoke_shell()
             shell.settimeout(1.0)
-            output += self._wait_prompt(shell, (">",))
+            text, matched = self._wait_prompt(shell, (">",))
+            output += text
+            ok = ok and matched
             shell.send("system\n")
-            output += self._wait_prompt(shell, ("]",))
+            text, matched = self._wait_prompt(shell, ("]",))
+            output += text
+            ok = ok and matched
             for command in commands:
                 shell.send(command + "\n")
-                output += self._wait_prompt(shell, ("]",))
+                text, matched = self._wait_prompt(shell, ("]",))
+                output += text
+                ok = ok and matched
             shell.send("exit\n")
             shell.send("exit\n")
         finally:
             client.close()
-        return output
+        return output, ok
 
     def _command(self, operation: str, ioc_value: str, config: dict[str, Any]) -> str:
         vendor = str(config.get("vendor") or "h3c").lower()
-        duration = int(config.get("timeout_minutes") or 120) * 60
+        duration = as_int(config.get("timeout_minutes"), 120) * 60
         if operation == "BLOCK":
             if vendor == "huawei":
                 return f"firewall blacklist item source-ip {ioc_value} timeout {duration}"
@@ -100,16 +131,40 @@ class SshFirewallPlugin(BasePlugin):
         return f"undo blacklist ip {ioc_value}"
 
     def test_connection(self, config: dict[str, Any]) -> PluginResult:
+        self.validate_config(config)
         try:
-            output = self._send(config, [])
-            return PluginResult(True, "SSH 登录并进入系统视图成功", raw=output[:4000])
+            output, ok = self._send(config, [])
         except Exception as exc:
             return PluginResult(False, f"SSH 连通性测试失败: {exc.__class__.__name__}: {exc}")
+        if not ok:
+            return PluginResult(
+                False, "SSH 已连接，但未出现预期提示符（可能被 ACL / 二次认证拦截）",
+                raw=output[:4000],
+            )
+        return PluginResult(True, "SSH 登录并进入系统视图成功", raw=output[:4000])
+
+    def _run(self, operation: str, ioc_value: str, config: dict[str, Any]) -> PluginResult:
+        command = self._command(operation, ioc_value, config)
+        output, prompt_ok = self._send(config, [command])
+        if not prompt_ok:
+            return PluginResult(
+                False,
+                "设备回显超时或未进入系统视图，命令下发结果未知",
+                raw=output[:4000],
+            )
+        lowered = output.lower()
+        hit = next((marker for marker in ERROR_MARKERS if marker in lowered), "")
+        if hit:
+            return PluginResult(
+                False,
+                f"设备拒绝执行（回显包含“{hit.strip()}”），请检查命令模板与账号权限",
+                raw=output[:4000],
+            )
+        verb = "封禁" if operation == "BLOCK" else "解封"
+        return PluginResult(True, f"{verb}命令已下发且设备回显正常", raw=output[:4000])
 
     def block(self, ioc_value: str, ioc_type: str, config: dict[str, Any]) -> PluginResult:
-        output = self._send(config, [self._command("BLOCK", ioc_value, config)])
-        return PluginResult(True, "封禁命令已下发", raw=output[:4000])
+        return self._run("BLOCK", ioc_value, config)
 
     def unblock(self, ioc_value: str, ioc_type: str, config: dict[str, Any]) -> PluginResult:
-        output = self._send(config, [self._command("UNBLOCK", ioc_value, config)])
-        return PluginResult(True, "解封命令已下发", raw=output[:4000])
+        return self._run("UNBLOCK", ioc_value, config)

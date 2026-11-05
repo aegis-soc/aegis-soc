@@ -12,7 +12,7 @@ from typing import Any
 
 import requests
 
-from plugins.base import BasePlugin, PluginConfigError, PluginResult
+from plugins.base import BasePlugin, PluginConfigError, PluginResult, as_bool, as_int
 
 
 class HttpGenericPlugin(BasePlugin):
@@ -30,6 +30,7 @@ class HttpGenericPlugin(BasePlugin):
         "timeout": "int（秒，默认 10）",
         "verify_ssl": "bool（默认 true）",
     }
+    required_config = ["base_url"]
 
     def _render(self, template: str, ioc_value: str, ioc_type: str, operation: str) -> str:
         values = {
@@ -43,9 +44,8 @@ class HttpGenericPlugin(BasePlugin):
         return template
 
     def _request(self, operation: str, ioc_value: str, ioc_type: str, config: dict[str, Any]) -> PluginResult:
+        self.validate_config(config)
         base_url = str(config.get("base_url") or "").rstrip("/")
-        if not base_url:
-            raise PluginConfigError("缺少 base_url")
         method = str(config.get(f"{operation.lower()}_method") or config.get("method") or "POST").upper()
         template = str(
             config.get(f"{operation.lower()}_body_template")
@@ -56,8 +56,8 @@ class HttpGenericPlugin(BasePlugin):
         path = str(config.get(f"{operation.lower()}_path") or config.get("path") or "")
         url = f"{base_url}/{path.lstrip('/')}" if path else base_url
         headers = dict(config.get("headers") or {})
-        timeout = int(config.get("timeout") or self.default_timeout)
-        verify = bool(config.get("verify_ssl", True))
+        timeout = as_int(config.get("timeout"), self.default_timeout)
+        verify = as_bool(config.get("verify_ssl"), True)
 
         response = requests.request(
             method, url, data=payload.encode("utf-8"), headers=headers,
@@ -72,17 +72,18 @@ class HttpGenericPlugin(BasePlugin):
         )
 
     def test_connection(self, config: dict[str, Any]) -> PluginResult:
+        self.validate_config(config)
         base_url = str(config.get("base_url") or "").rstrip("/")
-        if not base_url:
-            raise PluginConfigError("缺少 base_url")
         try:
             response = requests.get(
                 base_url,
-                timeout=int(config.get("timeout") or self.default_timeout),
-                verify=bool(config.get("verify_ssl", True)),
+                timeout=as_int(config.get("timeout"), self.default_timeout),
+                verify=as_bool(config.get("verify_ssl"), True),
             )
+            reachable = response.status_code < 500
             return PluginResult(
-                True, f"连通性正常 HTTP {response.status_code}",
+                reachable,
+                f"连通性{'正常' if reachable else '异常'} HTTP {response.status_code}",
                 raw=response.text[:1000], http_status=response.status_code,
             )
         except requests.RequestException as exc:

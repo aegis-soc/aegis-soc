@@ -36,6 +36,7 @@ class MyDevicePlugin(BasePlugin):
         "credential_ref": "string（环境变量名，值为含 api_key 的 JSON）",
         "timeout": "int（秒，默认 10）",
     }
+    required_config = ["base_url"]           # 平台在执行前统一校验，缺失直接判配置错误
     default_timeout = 10
 
     def _headers(self, config: dict[str, Any]) -> dict[str, str]:
@@ -83,8 +84,12 @@ register(MyDevicePlugin)
 ### 步骤 3：声明能力
 
 - `ioc_types`：目前支持 `IP` / `DOMAIN`；策略引擎会据此过滤。
-- `capabilities`：`BLOCK`（封禁）、`UNBLOCK`（解封）、`QUERY`（状态查询）。
+- `capabilities`：`BLOCK`（封禁）、`UNBLOCK`（解封）、`QUERY`（状态查询）。注册时校验，出现未知能力直接拒绝启动。
+- `required_config`：必填配置键列表。`BasePlugin.execute()` 与连通性测试都会先调用 `validate_config()`，
+  缺项返回「插件配置错误: 缺少必填配置: base_url」并直接判失败（不重试、不进熔断），
+  同时会识别 `_credential_missing`，提示「凭据环境变量 XXX 未设置」。
 - 若插件不支持 `UNBLOCK`，到期解封与白名单解封任务不会派发给它（会在任务中心体现为无匹配设备）。
+- 未实现 `query_status()` 时保持默认实现即可：它**返回失败**，不会伪造「查询成功」。
 
 ### 步骤 4：配置设备
 
@@ -114,8 +119,12 @@ MY_DEVICE_CRED='{"api_key":"your-real-key"}'
 3. 所有网络调用必须设置超时；
 4. 异常必须收敛为 `PluginResult(False, ...)`，不要抛到 Worker 之外（`BasePlugin.execute` 已统一兜底）；
 5. `raw` 中不得包含凭据；平台写 `device_task_log` 时只存动作与 IOC，不存插件配置；
-6. 插件需自带 README、参数说明、连通性测试与超时控制；
-7. 提交 PR 前执行 `pytest -q` 与 `python -m compileall -q app plugins workers`。
+6. **不得假成功**：只有设备明确确认成功才返回 `success=True`。HTTP 型插件要看状态码与返回体 `message`，
+   CLI 型插件要检查回显中的 `% Invalid input` / `Unrecognized command` / `Permission denied` 等错误特征，
+   带"配置生效"步骤的设备（如深信服 `applyconfig`）必须校验生效结果，否则黑名单没有真正落地；
+7. 读超时 / 提示符未出现属于"结果未知"，应返回失败让任务重试，不要当成功；
+8. 插件需自带 README、参数说明、连通性测试与超时控制；
+9. 提交 PR 前执行 `pytest -q` 与 `python -m compileall -q app plugins workers`。
 
 ## 4. 内置插件参考
 
