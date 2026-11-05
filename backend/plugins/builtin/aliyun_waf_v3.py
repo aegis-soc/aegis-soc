@@ -45,6 +45,29 @@ class AliyunApiError(Exception):
     """阿里云返回的错误（Code + Message），用于收敛为任务失败原因。"""
 
 
+# 常见错误码 → 可执行的处置建议。模板由用户在控制台预先创建，插件只往里推 IP。
+_ERROR_HINTS = {
+    "InvalidAccessKeyId.NotFound": "AccessKey 不存在，检查 credential_ref 里的 access_key_id",
+    "SignatureDoesNotMatch": "AccessKeySecret 不匹配或系统时间偏差超过 15 分钟",
+    "Forbidden.RAM": "RAM 子账号缺少权限：需要 DescribeInstance / DescribeDefenseTemplate / "
+                     "DescribeDefenseRules / CreateDefenseRule / ModifyDefenseRule",
+    "Forbidden": "RAM 子账号无权限访问该实例，检查授权策略",
+    "InvalidInstanceId": "instance_id 不是有效的 WAF 实例 ID（形如 waf_xxx）",
+    "Defense.Control.DefenseIpCountOversize": "单条 IP 黑名单规则最多 200 条，请调低 max_entries 或增加分片",
+}
+
+
+def _explain(code: str, message: str) -> str:
+    """把阿里云的英文错误码翻译成能直接照做的中文提示。"""
+    hint = _ERROR_HINTS.get(code)
+    if hint is None and "template" in code.lower():
+        hint = "template_id 不存在或不属于该实例，请先在 WAF 控制台「防护配置 → 防护规则 → IP 黑名单」创建模板并取 ID"
+    if hint is None and "Signature" in code:
+        hint = "签名校验失败，检查 access_key_secret 是否完整复制（含特殊字符时注意转义）"
+    base = f"{code}: {message}" if message else code
+    return f"{base}（{hint}）" if hint else base
+
+
 def _percent_encode(value: Any) -> str:
     return quote(str(value), safe="~")
 
@@ -64,6 +87,7 @@ class AliyunWafV3Plugin(BasePlugin):
         "action": "string（默认 block，可选 monitor）",
         "max_entries": "int（每规则最多 IP，默认 200，上限 200）",
         "max_rules": "int（最多分片数，默认 5）",
+        "auto_create_rule": "bool（默认 true；false 时只写已有规则，绝不新建规则）",
         "endpoint": "string（默认 wafopenapi.cn-hangzhou.aliyuncs.com）",
         "region_id": "string（默认 cn-hangzhou）",
         "timeout": "int（秒，默认 10）",
@@ -114,8 +138,8 @@ class AliyunWafV3Plugin(BasePlugin):
             payload = {"Message": response.text[:200]}
         if response.status_code >= 300:
             code = payload.get("Code") or f"HTTP {response.status_code}"
-            message = payload.get("Message") or ""
-            raise AliyunApiError(f"{code}: {message}")
+            message = payload.get("Message") or payload.get("Message_") or ""
+            raise AliyunApiError(_explain(str(code), str(message)))
         return payload
 
     # ---------- 规则读写 ----------
@@ -242,6 +266,12 @@ class AliyunWafV3Plugin(BasePlugin):
             expected = new_ips
             name = target["name"]
         else:
+            if not as_bool(config.get("auto_create_rule"), True):
+                return PluginResult(
+                    False,
+                    f"模板 {config.get('template_id')} 下没有可容纳新 IP 的规则，且 auto_create_rule=false；"
+                    f"请在控制台该模板内手动创建 IP 黑名单规则并命名为 {prefix}（可续 {prefix}-2/-3）",
+                )
             if len(shards) >= max_rules:
                 return PluginResult(
                     False,
@@ -303,17 +333,39 @@ class AliyunWafV3Plugin(BasePlugin):
                 return PluginResult(False, f"请求阿里云失败: {exc.__class__.__name__}: {exc}")
 
     def test_connection(self, config: dict[str, Any]) -> PluginResult:
-        """只读：查询 IP 黑名单规则列表，验证 AK 权限、实例与模板是否匹配；不写任何数据。"""
+        """只读：校验 AK、实例、模板三者匹配，并列出本插件管理的规则；不写任何数据。"""
         self.validate_config(config)
+        template_id = as_int(config.get("template_id"), 0)
         try:
+            instance = self._rpc("DescribeInstance", {"InstanceId": config["instance_id"]}, config)
+            template = self._rpc(
+                "DescribeDefenseTemplate",
+                {"InstanceId": config["instance_id"], "TemplateId": template_id},
+                config,
+            ).get("Template") or {}
             shards = self._shards(config)
-        except (AliyunApiError, requests.RequestException) as exc:
+        except AliyunApiError as exc:
             return PluginResult(False, f"连通性测试失败: {exc}")
-        detail = "、".join(f"{s['name']}({len(s['ips'])}条)" for s in shards) or "暂无"
+        except requests.RequestException as exc:
+            return PluginResult(False, f"连通性测试失败: 请求异常 {exc.__class__.__name__}")
+
+        scene = str(template.get("DefenseScene") or "")
+        if scene and scene != SCENE:
+            return PluginResult(
+                False,
+                f"模板 {template_id}（{template.get('TemplateName', '未命名')}）的场景是 {scene}，"
+                f"不是 {SCENE}；请填 IP 黑名单模板的 ID",
+            )
+        status = instance.get("InstanceStatus") or instance.get("Status") or "unknown"
+        detail = "、".join(f"{s['name']}({len(s['ips'])}条)" for s in shards) or "暂无（首次封禁将创建）"
         return PluginResult(
             True,
-            f"AK 与实例可用，当前黑名单规则：{detail}",
-            raw=json.dumps({"shards": [s["name"] for s in shards]}, ensure_ascii=False),
+            f"AK 与实例可用（状态 {status}），模板 {template.get('TemplateName') or template_id} 场景 {scene or SCENE}，"
+            f"当前规则：{detail}",
+            raw=json.dumps(
+                {"template": template.get("TemplateName"), "scene": scene, "shards": [s["name"] for s in shards]},
+                ensure_ascii=False,
+            ),
         )
 
     def block(self, ioc_value: str, ioc_type: str, config: dict[str, Any]) -> PluginResult:

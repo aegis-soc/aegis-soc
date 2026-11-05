@@ -7,6 +7,7 @@
 ### Added
 
 - **阿里云 WAF 3.0 插件** `aliyun_waf_v3`：`DefenseScene=ip_blacklist`，`DescribeDefenseRules` 取全量 → 合并 → `ModifyDefenseRule` 整表回写；单规则 200 条上限（官方限制）自动分片为 `aegis-block-N`；已存在 IP 幂等跳过；写入后回读确认，避免并发覆盖导致漏封；空规则自动停用；RAM 最小权限，AK 只走 `credential_ref`，签名用 RPC HMAC-SHA1 不引入 SDK
+- **插件不建模板，只推 IP**：模板由人工在 WAF 控制台预建，插件只往 `template_id` 下的 `ip_blacklist` 规则写 IP；连通性测试新增 `DescribeDefenseTemplate` 校验模板存在且场景为 `ip_blacklist`，模板 ID 填错会明确失败；新增 `auto_create_rule`（默认 `true`），设为 `false` 后连分片规则也不自动建，全部由人工建好再推
 - **接入指南** `docs/plugins-aliyun-waf.md`：容量与分片规则、RAM 权限策略、模板 ID 获取、配置示例与五步验证
 - **Palo Alto 插件** `paloalto_fw`：PAN-OS 9.1+ XML API，user-id 把 IP 注册到 DAG Tag，即时生效无需 commit；严格解析 `<response status>`，避免 200 假成功；连通性测试使用只读 `show system info`
 - **启明星辰插件** `qiming_fw`：天清汉马 USG Web API，登录支持 Token / Cookie 双模式，登录路径、黑名单路径与请求体、保存生效接口全部参数化，换型号只改配置；配置保存失败整单判失败

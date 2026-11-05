@@ -24,11 +24,13 @@ CONFIG = {
 
 
 class FakeWaf:
-    def __init__(self, rules=None):
+    def __init__(self, rules=None, scene="ip_blacklist", template_name="aegis-ip-black"):
         self.rules = rules or []
         self.writes: list[tuple[str, dict]] = []
         self.next_id = 9000
         self.fail_with: str | None = None
+        self.scene = scene
+        self.template_name = template_name
 
     def add_rule(self, name: str, ips: list[str], status: int = 1):
         self.next_id += 1
@@ -44,6 +46,15 @@ class FakeWaf:
     def rpc(self, action, params, config):
         if self.fail_with:
             raise AliyunApiError(self.fail_with)
+        if action == "DescribeInstance":
+            return {"InstanceStatus": "running"}
+        if action == "DescribeDefenseTemplate":
+            return {"Template": {
+                "TemplateId": params["TemplateId"],
+                "TemplateName": self.template_name,
+                "DefenseScene": self.scene,
+                "TemplateStatus": 1,
+            }}
         if action == "DescribeDefenseRules":
             return {"TotalCount": len(self.rules), "Rules": self.rules}
         if action in {"CreateDefenseRule", "ModifyDefenseRule"}:
@@ -195,6 +206,65 @@ def test_signature_parameters(monkeypatch):
     assert params["SignatureMethod"] == "HMAC-SHA1"
     assert params["Signature"]
     assert "sk" not in json.dumps(params)  # 密钥不得出现在请求参数里
+
+
+def test_auto_create_rule_false_never_creates_rule():
+    """模板下没有规则时，禁止新建，明确要求人工在控制台建。"""
+    fake = FakeWaf()
+    result = _plugin(fake).block("1.2.3.4", "IP", dict(CONFIG, auto_create_rule=False))
+    assert result.success is False
+    assert "auto_create_rule=false" in result.message
+    assert "手动创建" in result.message
+    assert fake.writes == []
+
+
+def test_auto_create_rule_false_still_writes_existing_rule():
+    fake = FakeWaf()
+    fake.add_rule("aegis-block", ["1.1.1.1"])
+    result = _plugin(fake).block("2.2.2.2", "IP", dict(CONFIG, auto_create_rule=False))
+    assert result.success is True
+    action, item = fake.writes[-1]
+    assert action == "ModifyDefenseRule"
+    assert item["remoteAddr"] == ["1.1.1.1", "2.2.2.2"]
+
+
+def test_connection_checks_template_scene():
+    fake = FakeWaf()
+    fake.add_rule("aegis-block", ["1.1.1.1"])
+    result = _plugin(fake).test_connection(CONFIG)
+    assert result.success is True
+    assert "aegis-ip-black" in result.message
+    assert "aegis-block(1条)" in result.message
+
+
+def test_connection_rejects_wrong_template_scene():
+    """模板 ID 填成了别的场景时，必须失败而不是显示正常。"""
+    fake = FakeWaf(scene="waf_group")
+    result = _plugin(fake).test_connection(CONFIG)
+    assert result.success is False
+    assert "waf_group" in result.message
+    assert "ip_blacklist" in result.message
+
+
+def test_template_error_gets_actionable_hint():
+    """模板不存在时给出「先去控制台建模板」的中文提示，而不是干巴巴的英文码。"""
+    message = aliyun_mod._explain("Defense.Template.NotFound", "The specified template does not exist.")
+    assert "控制台" in message
+    assert "template_id" in message
+
+
+def test_rpc_maps_api_error_with_hint(monkeypatch):
+    class Resp:
+        status_code = 400
+        text = '{"Code":"Defense.Template.NotFound","Message":"The specified template does not exist."}'
+
+        def json(self):
+            return {"Code": "Defense.Template.NotFound", "Message": "The specified template does not exist."}
+
+    monkeypatch.setattr(aliyun_mod.requests, "get", lambda *a, **k: Resp())
+    with pytest.raises(AliyunApiError) as exc:
+        AliyunWafV3Plugin()._rpc("DescribeDefenseRules", {}, CONFIG)
+    assert "控制台" in str(exc.value)
 
 
 def test_plugin_registered():

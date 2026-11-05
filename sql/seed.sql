@@ -35,7 +35,7 @@ INSERT INTO `device_plugin` (`plugin_code`, `plugin_name`, `version`, `manifest`
    '{"ioc_types":["IP"],"capabilities":["BLOCK","UNBLOCK"],"config_schema":{"base_url":"string","username":"string","credential_ref":"string","login_path":"string","token_path":"string","block_path":"string","unblock_path":"string","save_path":"string","verify_ssl":"bool"},"description":"Web API 登录鉴权 → 黑名单下发 → 可选保存生效"}',
    1, 1, '天清汉马 Web API，路径与报文全参数化，保存失败判失败'),
   ('aliyun_waf_v3', '阿里云 WAF 3.0', '1.0.0',
-   '{"ioc_types":["IP"],"capabilities":["BLOCK","UNBLOCK"],"config_schema":{"instance_id":"string","template_id":"int","credential_ref":"string","rule_name":"string","action":"string","max_entries":"int","max_rules":"int","endpoint":"string"},"description":"IP 黑名单：取全量 → 合并 → 整表回写，单规则 200 条自动分片"}',
+   '{"ioc_types":["IP"],"capabilities":["BLOCK","UNBLOCK"],"config_schema":{"instance_id":"string","template_id":"int","credential_ref":"string","rule_name":"string","action":"string","max_entries":"int","max_rules":"int","auto_create_rule":"bool","endpoint":"string"},"description":"IP 黑名单：取全量 → 合并 → 整表回写，单规则 200 条自动分片"}',
    1, 1, 'WAF 3.0 ip_blacklist：整表回写、200 条/规则自动分片、写入后回读校验')
 ON DUPLICATE KEY UPDATE `plugin_name` = VALUES(`plugin_name`);
 
