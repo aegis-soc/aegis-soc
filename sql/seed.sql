@@ -27,7 +27,16 @@ INSERT INTO `device_plugin` (`plugin_code`, `plugin_name`, `version`, `manifest`
    1, 1, '由现有生产 paramiko 脚本抽象，全参数化，凭据仅通过环境变量引用'),
   ('sangfor_ips', '深信服 IPS 全局黑名单', '1.0.0',
    '{"ioc_types":["IP"],"capabilities":["BLOCK","UNBLOCK"],"config_schema":{"base_url":"string","username":"string","credential_ref":"string","verify_ssl":"bool"}}',
-   1, 1, '登录 → SHA256 签名 → 黑名单插入 → applyconfig 配置生效')
+   1, 1, '登录 → SHA256 签名 → 黑名单插入 → applyconfig 配置生效'),
+  ('paloalto_fw', 'Palo Alto PAN-OS', '1.0.0',
+   '{"ioc_types":["IP"],"capabilities":["BLOCK","UNBLOCK"],"config_schema":{"base_url":"string","credential_ref":"string","vsys":"string","tag_name":"string","verify_ssl":"bool","timeout":"int"},"description":"user-id 注册 IP 到 DAG tag，即时生效、无需 commit"}',
+   1, 1, 'PAN-OS 9.1+ XML API，user-id + Dynamic Address Group 即时封禁'),
+  ('qiming_fw', '启明星辰 天清汉马 USG', '1.0.0',
+   '{"ioc_types":["IP"],"capabilities":["BLOCK","UNBLOCK"],"config_schema":{"base_url":"string","username":"string","credential_ref":"string","login_path":"string","token_path":"string","block_path":"string","unblock_path":"string","save_path":"string","verify_ssl":"bool"},"description":"Web API 登录鉴权 → 黑名单下发 → 可选保存生效"}',
+   1, 1, '天清汉马 Web API，路径与报文全参数化，保存失败判失败'),
+  ('aliyun_waf_v3', '阿里云 WAF 3.0', '1.0.0',
+   '{"ioc_types":["IP"],"capabilities":["BLOCK","UNBLOCK"],"config_schema":{"instance_id":"string","template_id":"int","credential_ref":"string","rule_name":"string","action":"string","max_entries":"int","max_rules":"int","endpoint":"string"},"description":"IP 黑名单：取全量 → 合并 → 整表回写，单规则 200 条自动分片"}',
+   1, 1, 'WAF 3.0 ip_blacklist：整表回写、200 条/规则自动分片、写入后回读校验')
 ON DUPLICATE KEY UPDATE `plugin_name` = VALUES(`plugin_name`);
 
 -- ---------- 示例设备（mock，开箱即可跑通闭环） ----------

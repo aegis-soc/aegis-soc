@@ -4,8 +4,11 @@ from __future__ import annotations
 from typing import Callable
 
 from plugins.base import BasePlugin
+from plugins.builtin.aliyun_waf_v3 import AliyunWafV3Plugin
 from plugins.builtin.http_generic import HttpGenericPlugin
 from plugins.builtin.mock import MockPlugin
+from plugins.builtin.paloalto_fw import PaloAltoFwPlugin
+from plugins.builtin.qiming_fw import QimingFwPlugin
 from plugins.builtin.sangfor_ips import SangforIpsPlugin
 from plugins.builtin.ssh_firewall import SshFirewallPlugin
 
@@ -15,3 +18,6 @@ def register_builtins(register: Callable[[BasePlugin | type[BasePlugin]], None])
     register(HttpGenericPlugin)
     register(SshFirewallPlugin)
     register(SangforIpsPlugin)
+    register(PaloAltoFwPlugin)
+    register(QimingFwPlugin)
+    register(AliyunWafV3Plugin)

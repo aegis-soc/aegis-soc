@@ -6,6 +6,11 @@
 
 ### Added
 
+- **阿里云 WAF 3.0 插件** `aliyun_waf_v3`：`DefenseScene=ip_blacklist`，`DescribeDefenseRules` 取全量 → 合并 → `ModifyDefenseRule` 整表回写；单规则 200 条上限（官方限制）自动分片为 `aegis-block-N`；已存在 IP 幂等跳过；写入后回读确认，避免并发覆盖导致漏封；空规则自动停用；RAM 最小权限，AK 只走 `credential_ref`，签名用 RPC HMAC-SHA1 不引入 SDK
+- **接入指南** `docs/plugins-aliyun-waf.md`：容量与分片规则、RAM 权限策略、模板 ID 获取、配置示例与五步验证
+- **Palo Alto 插件** `paloalto_fw`：PAN-OS 9.1+ XML API，user-id 把 IP 注册到 DAG Tag，即时生效无需 commit；严格解析 `<response status>`，避免 200 假成功；连通性测试使用只读 `show system info`
+- **启明星辰插件** `qiming_fw`：天清汉马 USG Web API，登录支持 Token / Cookie 双模式，登录路径、黑名单路径与请求体、保存生效接口全部参数化，换型号只改配置；配置保存失败整单判失败
+- **接入指南** `docs/plugins-paloalto-qiming.md`：PA 侧 Tag / DAG / 策略 / API Key 四步配置与验证方法，启明 curl 三步打通法与成功判定规则
 - **一键冒烟验收脚本** `scripts/smoke_test.py`：仅用 Python 标准库，覆盖界面静态资源、健康检查、登录、白名单豁免、告警接入、幂等去重、IOC 落库、插件下发、任务日志、熔断、审计与大盘共 18 项检查，退出码可直接用于发布流水线
 - **验证与验收指南** `docs/verify.md`：三层验证模型（CI / 冒烟脚本 / 界面人工验收）、GitHub 上可见范围说明、三种「看到界面」的落地方式（本地 Docker / 云服务器 / Codespaces）、常见失败对照表
 - **CI 工作流** `.github/workflows/ci.yml`：后端 `compileall` + `pytest`、前端 `npm ci` + `npm run build`、两份 Compose 配置校验

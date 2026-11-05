@@ -101,10 +101,12 @@ def test_manual_ioc_rejects_whitelisted(client, auth_headers):
 def test_policy_plugin_device_audit(client, auth_headers):
     assert client.get("/api/v1/policies", headers=auth_headers).json()["data"]["total"] >= 1
     plugins = client.get("/api/v1/plugins", headers=auth_headers).json()["data"]
-    assert plugins["total"] == 4
-    assert {p["plugin_code"] for p in plugins["items"]} == {
-        "mock", "http_generic", "ssh_firewall", "sangfor_ips"
-    }
+    codes = {p["plugin_code"] for p in plugins["items"]}
+    assert plugins["total"] == len(codes)
+    assert {
+        "mock", "http_generic", "ssh_firewall", "sangfor_ips",
+        "paloalto_fw", "qiming_fw", "aliyun_waf_v3",
+    } <= codes
     assert client.get("/api/v1/devices", headers=auth_headers).json()["data"]["total"] >= 1
     assert client.get("/api/v1/audit", headers=auth_headers).json()["data"]["total"] >= 1
     dashboard = client.get("/api/v1/dashboard", headers=auth_headers)

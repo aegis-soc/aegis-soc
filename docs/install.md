@@ -108,7 +108,7 @@ curl -X POST "http://127.0.0.1:8080/api/v1/alerts/graylog?secret=你的SECRET" \
 
 ## 5. 对接真实设备
 
-1. 进入「设备管理」→ 新增设备，选择插件（`http_generic` / `ssh_firewall` / `sangfor_ips`）；
+1. 进入「设备管理」→ 新增设备，选择插件（`http_generic` / `ssh_firewall` / `sangfor_ips` / `paloalto_fw` / `qiming_fw`）；
 2. 在「插件配置(JSON)」中填写**非敏感**连接参数；
 3. 凭据（口令、API Key）放入宿主机环境变量，例如：
 

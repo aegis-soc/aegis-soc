@@ -104,7 +104,10 @@ aegis-soc/
 │   │       ├── mock.py            # 只记日志不下发
 │   │       ├── http_generic.py    # 低代码通用 REST 插件（文档 6.5）
 │   │       ├── ssh_firewall.py    # 由 FW.txt 提炼，H3C / 华为 CLI
-│   │       └── sangfor_ips.py     # 由 Block2.0.txt 提炼，签名 + 配置生效
+│   │       ├── sangfor_ips.py     # 由 Block2.0.txt 提炼，签名 + 配置生效
+│   │       ├── paloalto_fw.py     # PAN-OS 9.1+，user-id + DAG Tag
+│   │       ├── qiming_fw.py       # 天清汉马 Web API，路径/报文参数化
+│   │       └── aliyun_waf_v3.py   # WAF 3.0 IP 黑名单，整表回写 + 分片
 │   ├── workers/
 │   │   ├── celery_app.py
 │   │   ├── tasks.py               # 下发 / 指数退避重试 / 状态回写 / 到期解封
