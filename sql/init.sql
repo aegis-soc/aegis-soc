@@ -106,6 +106,10 @@ CREATE TABLE IF NOT EXISTS `ioc_indicator` (
   `source_detail`     VARCHAR(128) NULL COMMENT '来源原始标识：设备名 / stream / vendor',
   `alert_id`          VARCHAR(128) NULL COMMENT '关联告警 ID',
   `reject_reason`     VARCHAR(255) NULL COMMENT '被拦截或豁免的原因',
+  `geo_country`       VARCHAR(64)  NULL COMMENT '归属国家（写入时快照，中文）',
+  `geo_province`      VARCHAR(64)  NULL COMMENT '归属省份',
+  `geo_city`          VARCHAR(64)  NULL COMMENT '归属城市',
+  `geo_isp`           VARCHAR(64)  NULL COMMENT '运营商',
   `source_count`      INT          NOT NULL DEFAULT 0,
   `created_by`        VARCHAR(64)  NULL,
   `created_at`        DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -115,7 +119,8 @@ CREATE TABLE IF NOT EXISTS `ioc_indicator` (
   KEY `idx_ioc_status` (`status`),
   KEY `idx_ioc_expire` (`expire_at`),
   KEY `idx_ioc_type` (`ioc_type`),
-  KEY `idx_ioc_source` (`source_type`)
+  KEY `idx_ioc_source` (`source_type`),
+  KEY `idx_ioc_geo` (`geo_country`)
 ) ENGINE=InnoDB COMMENT='IOC 主表（黑名单流水，同值不合并）';
 
 CREATE TABLE IF NOT EXISTS `ioc_ip_detail` (

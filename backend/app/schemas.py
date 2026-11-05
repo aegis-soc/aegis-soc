@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 IocType = Literal["IP", "DOMAIN", "URL", "HASH"]
 Operation = Literal["BLOCK", "UNBLOCK", "QUERY"]
@@ -124,9 +124,25 @@ class IocOut(_Out):
     source_detail: str | None = None
     alert_id: str | None = None
     reject_reason: str | None = None
+    # 归属地快照（写入时查询离线库；库缺失或 IPv6 时为空）
+    geo_country: str | None = None
+    geo_province: str | None = None
+    geo_city: str | None = None
+    geo_isp: str | None = None
     source_count: int
     created_by: str | None = None
     created_at: datetime
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def geo_region(self) -> str | None:
+        """省·市 合成一列给前端用，直辖市去重（北京市·北京市 → 北京市）。"""
+        parts = [p for p in (self.geo_province, self.geo_city) if p]
+        if not parts:
+            return None
+        if len(parts) == 2 and parts[0] == parts[1]:
+            return parts[0]
+        return "·".join(parts)
 
 
 # ---------------- 白名单 ----------------

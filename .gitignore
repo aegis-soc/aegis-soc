@@ -41,6 +41,9 @@ yarn-error.log*
 logs/
 runtime/
 scripts/.dev-local.pids
+# IP 归属地离线库（约 11 MB，用 scripts/fetch_geoip.py 下载，不入库）
+backend/data/*.xdb
+
 .idea/
 .vscode/
 .DS_Store

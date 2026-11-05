@@ -23,6 +23,7 @@
 - ✅ **插件化设备网关**：统一接口 + Manifest 能力声明，新增设备只写插件，平台主体不改
 - ✅ **IOC 生命周期**：IP / 域名黑名单、IP 白名单（单 IP / CIDR / 批量导入）、过期自动解封、来源标记、标签备注
 - ✅ **黑名单流水**：同一 IP 每次命中独立成条（同值不合并），各自保留添加时间 / 过期时间 / 来源告警；来自 IPS / WAF / 零信任 / 威胁情报 自动分类；被拦截的地址以 `rejected` 留痕，可回答「为什么没封」
+- ✅ **IP 归属地**：黑名单直接显示国家 / 省·市（如「中国 · 广东省·深圳市」），来自 ip2region 离线库（11 MB，无需联网、无需 ipip 授权），写入时快照落库、支持按国家筛选
 - ✅ **硬性安全边界**：白名单优先、内网/环回/保留地址禁止封禁、IOC 类型与设备能力匹配、全局熔断开关
 - ✅ **可靠异步任务**：Celery + Beat，幂等约束、指数退避重试、超时控制、到期自动解封
 - ✅ **全链路审计**：人工操作、自动封禁、设备请求/响应报文全留痕，满足等保追溯
@@ -113,7 +114,7 @@ aegis-soc/
 ├── frontend/             # Vue3 + Element Plus + Vite
 ├── deploy/               # nginx.conf / my.cnf
 ├── scripts/              # smoke_test.py（部署后一键冒烟验收，仅标准库）
-├── docs/                 # install / deploy-cloud / verify / graylog / plugin-dev / api / security / architecture / blacklist-history
+├── docs/                 # install / deploy-cloud / verify / graylog / plugin-dev / api / security / architecture / blacklist-history / geoip
 ├── .github/workflows/    # ci.yml（编译+测试+构建+编排校验）、release.yml（tag 触发多架构镜像发布）
 ├── docker-compose.yml
 ├── .env.example
@@ -166,6 +167,7 @@ aegis-soc/
 cd backend
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+python ../scripts/fetch_geoip.py                   # 可选：下载 IP 归属地库（约 11 MB），不装则国家/地区留空
 export DATABASE_URL="sqlite:///./aegis_dev.db"    # 可先用 SQLite 快速起
 export TASK_EAGER=true
 uvicorn app.main:app --reload --port 8000

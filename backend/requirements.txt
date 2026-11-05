@@ -12,3 +12,5 @@ httpx>=0.27.0
 requests>=2.32.0
 paramiko>=3.4.0
 pytest>=8.0.0
+# IP 归属地离线查询（纯 Python，约 10 KB；数据文件由 scripts/fetch_geoip.py 下载）
+py-ip2region>=3.0.6

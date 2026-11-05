@@ -10,7 +10,7 @@ import uuid
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.common import BizError, client_ip, ok, paginate
@@ -24,6 +24,7 @@ from app.engines.policy import (
 )
 from app.engines.validation import check_whitelist, match_devices, validate_ioc
 from app.models import IocDomainDetail, IocIndicator, IocIpDetail, IpWhitelist, SystemUser
+from app.services import geoip
 from app.schemas import (
     IocCreateIn,
     IocOut,
@@ -135,6 +136,10 @@ def _create_ioc(
             )
     row.status = "active"
     row.reject_reason = None
+    # 归属地快照：新建时写入；老记录（本功能上线前创建的）缺归属地时顺手补上
+    if ioc_type == "IP" and not row.geo_country:
+        for key, value in geoip.geo_fields(check.normalized).items():
+            setattr(row, key, value)
     row.confidence = body.confidence if body.confidence is not None else row.confidence
     row.risk_level = body.risk_level or row.risk_level
     row.expire_at = expire_at or row.expire_at
@@ -210,12 +215,15 @@ def _list_ioc(
     status: str | None,
     keyword: str | None,
     source_type: str | None = None,
+    country: str | None = None,
 ):
     stmt = select(IocIndicator).where(IocIndicator.ioc_type == ioc_type)
     if status:
         stmt = stmt.where(IocIndicator.status == status)
     if source_type:
         stmt = stmt.where(IocIndicator.source_type == source_type)
+    if country:
+        stmt = stmt.where(IocIndicator.geo_country == country)
     if keyword:
         stmt = stmt.where(
             or_(
@@ -223,6 +231,9 @@ def _list_ioc(
                 IocIndicator.remark.like(f"%{keyword}%"),
                 IocIndicator.source_detail.like(f"%{keyword}%"),
                 IocIndicator.alert_id.like(f"%{keyword}%"),
+                IocIndicator.geo_country.like(f"%{keyword}%"),
+                IocIndicator.geo_province.like(f"%{keyword}%"),
+                IocIndicator.geo_city.like(f"%{keyword}%"),
             )
         )
     stmt = stmt.order_by(IocIndicator.created_at.desc(), IocIndicator.id.desc())
@@ -240,10 +251,28 @@ def list_ip_ioc(
     status: str | None = None,
     keyword: str | None = None,
     source_type: str | None = None,
+    country: str | None = Query(None, description="按归属国家精确筛选，如 中国 / 美国"),
     db: Session = Depends(get_db),
     _=Depends(require_perms("ioc:read")),
 ):
-    return _list_ioc("IP", db, page, page_size, status, keyword, source_type)
+    return _list_ioc("IP", db, page, page_size, status, keyword, source_type, country)
+
+
+@router.get("/ioc/geo/countries")
+def list_geo_countries(
+    db: Session = Depends(get_db),
+    _=Depends(require_perms("ioc:read")),
+):
+    """归属国家下拉选项：只取有数据的国家，按记录数倒序，附带计数。"""
+    rows = (
+        db.query(IocIndicator.geo_country, func.count(IocIndicator.id))
+        .filter(IocIndicator.ioc_type == "IP", IocIndicator.geo_country.isnot(None))
+        .group_by(IocIndicator.geo_country)
+        .order_by(func.count(IocIndicator.id).desc())
+        .limit(50)
+        .all()
+    )
+    return ok({"items": [{"country": c, "count": n} for c, n in rows]})
 
 
 @router.post("/ioc/ips")

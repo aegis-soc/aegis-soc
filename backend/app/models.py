@@ -116,6 +116,7 @@ class IocIndicator(Base):
         Index("idx_ioc_expire", "expire_at"),
         Index("idx_ioc_type", "ioc_type"),
         Index("idx_ioc_source", "source_type"),
+        Index("idx_ioc_geo", "geo_country"),
     )
 
     id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
@@ -138,6 +139,13 @@ class IocIndicator(Base):
     alert_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # 状态原因：被拦截/豁免的理由，或到期未解封的说明
     reject_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # IP 归属地快照：写入时由 app.services.geoip 查离线库填充。
+    # 刻意存快照而不是每次查询：库每月更新，历史记录应保留当时的归属，
+    # 也避免列表接口依赖库文件（库缺失时旧记录照样能看）。
+    geo_country: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    geo_province: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    geo_city: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    geo_isp: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)

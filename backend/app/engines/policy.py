@@ -32,6 +32,7 @@ from app.models import (
     IocSource,
 )
 from app.services.audit import write_audit
+from app.services import geoip
 
 logger = logging.getLogger("aegis")
 
@@ -150,6 +151,7 @@ def create_ioc_record(
         reject_reason=reject_reason,
         source_count=1,
         created_by=created_by,
+        **(geoip.geo_fields(validation.normalized) if ioc_type == "IP" else {}),
     )
     db.add(row)
     db.flush()
@@ -244,6 +246,7 @@ def record_rejected_ioc(
         reject_reason=reason[:255],
         source_count=1,
         created_by=created_by,
+        **(geoip.geo_fields(normalized) if ioc_type == "IP" else {}),
     )
     db.add(row)
     db.flush()

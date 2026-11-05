@@ -191,6 +191,20 @@ def main() -> int:
              matched[0].get("created_at") if matched else "-",
          ))
 
+    # 归属地：依赖 backend/data/ip2region_v4.xdb（由 scripts/fetch_geoip.py 下载）
+    _, health = http("GET", f"{base}/api/healthz", timeout=args.timeout)
+    geo_ready = bool(((health or {}).get("data") or {}).get("geoip", {}).get("db_exists"))
+    if geo_ready:
+        step("记录带归属国家/地区",
+             bool(matched) and all(i.get("geo_country") and i.get("geo_region") for i in matched),
+             "{} · {} · {}".format(
+                 matched[0].get("geo_country") if matched else "-",
+                 matched[0].get("geo_region") if matched else "-",
+                 matched[0].get("geo_isp") if matched else "-",
+             ))
+    else:
+        print("  [skip] 未安装归属地库（python scripts/fetch_geoip.py），跳过归属地校验")
+
     # 内网地址不允许下发，但必须留痕（status=rejected）
     private_ip = "10.99.99.99"
     private_payload = {
@@ -211,6 +225,10 @@ def main() -> int:
     rejected = [i for i in items_of(data) if i.get("normalized_value") == private_ip]
     step("内网地址被拦截并留痕", bool(rejected),
          rejected[0].get("reject_reason", "") if rejected else "未找到 rejected 记录")
+    if geo_ready:
+        step("内网地址归属地标记为内网",
+             bool(rejected) and rejected[0].get("geo_country") == "内网",
+             rejected[0].get("geo_country") if rejected else "-")
 
     code, data = http("GET", f"{base}/api/v1/tasks?keyword={PROBE_IP}", token=token,
                       timeout=args.timeout)

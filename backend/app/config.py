@@ -44,6 +44,9 @@ class Settings:
     task_retry_backoff: int
     task_eager: bool
     max_block_per_alert: int
+    # IP 归属地（ip2region 离线库）：关闭或库文件缺失时归属地留空，不影响封禁
+    geoip_enabled: bool
+    geoip_db_path: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -72,6 +75,8 @@ class Settings:
             task_retry_backoff=_int("TASK_RETRY_BACKOFF", 60),
             task_eager=_bool("TASK_EAGER", False),
             max_block_per_alert=_int("MAX_BLOCK_PER_ALERT", 20),
+            geoip_enabled=_bool("GEOIP_ENABLED", True),
+            geoip_db_path=_get("GEOIP_DB_PATH", ""),
         )
 
     @property

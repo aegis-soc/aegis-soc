@@ -16,6 +16,7 @@ from app.cache import cache
 from app.common import ok, register_exception_handlers
 from app.config import settings
 from app.database import get_db
+from app.services import geoip
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -63,5 +64,7 @@ def healthz(db: Session = Depends(get_db)):
             "database": "sqlite" if settings.is_sqlite else "mysql",
             "cache": cache.mode,
             "kill_switch": cache.kill_switch,
+            # 归属地库状态：false 时黑名单照常入库，只是国家/地区留空
+            "geoip": {"enabled": geoip.is_enabled(), "db_exists": geoip.db_path().exists()},
         }
     )

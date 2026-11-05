@@ -1,7 +1,7 @@
 <template>
   <div class="page">
     <div class="page-header">
-      <div><h2 class="page-title">IP 黑名单</h2><p class="page-desc">同一 IP 多次命中按流水记录保存，不合并；被拦截的 IOC 也会留痕，状态为 rejected / whitelisted</p></div>
+      <div><h2 class="page-title">IP 黑名单</h2><p class="page-desc">同一 IP 多次命中按流水记录保存，不合并；被拦截的 IOC 也会留痕，状态为 rejected / whitelisted；国家/地区由 ip2region 离线库在写入时记录</p></div>
       <el-button type="primary" :icon="Plus" @click="dialog = true">新增黑名单</el-button>
     </div>
     <div class="filter-bar">
@@ -11,12 +11,29 @@
       <el-select v-model="query.source_type" placeholder="来源" clearable style="width: 130px">
         <el-option v-for="s in SOURCE_OPTIONS" :key="s.value" :label="s.label" :value="s.value" />
       </el-select>
-      <el-input v-model="query.keyword" placeholder="IP / 设备名 / 告警ID / 备注" clearable style="width: 240px" @keyup.enter="load" />
+      <el-select v-model="query.country" placeholder="国家/地区" clearable filterable style="width: 150px">
+        <el-option v-for="c in countries" :key="c.country" :label="`${c.country} (${c.count})`" :value="c.country" />
+      </el-select>
+      <el-input v-model="query.keyword" placeholder="IP / 归属地 / 设备名 / 告警ID" clearable style="width: 240px" @keyup.enter="load" />
       <el-button type="primary" @click="load">查询</el-button>
     </div>
     <div class="table-card">
       <el-table :data="rows" size="small" stripe v-loading="loading">
         <el-table-column prop="normalized_value" label="IP / CIDR" min-width="140" class-name="mono" fixed />
+        <el-table-column label="国家" width="110">
+          <template #default="{ row }">
+            <span v-if="!row.geo_country" class="text-muted">-</span>
+            <el-tag v-else size="small" :type="row.geo_country === '中国' ? 'danger' : 'info'" effect="plain">{{ row.geo_country }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="地区" min-width="150">
+          <template #default="{ row }">
+            <span v-if="!row.geo_region" class="text-muted">-</span>
+            <el-tooltip v-else :content="geoTitle(row)" placement="top">
+              <span>{{ row.geo_region }}</span>
+            </el-tooltip>
+          </template>
+        </el-table-column>
         <el-table-column label="来源" width="120">
           <template #default="{ row }">
             <el-tooltip :content="sourceTooltip(row)" placement="top">
@@ -77,7 +94,8 @@ const rows = ref([])
 const total = ref(0)
 const loading = ref(false)
 const dialog = ref(false)
-const query = reactive({ page: 1, page_size: 20, status: '', source_type: '', keyword: '' })
+const countries = ref([])
+const query = reactive({ page: 1, page_size: 20, status: '', source_type: '', country: '', keyword: '' })
 const form = reactive({ ioc_value: '', confidence: 80, risk_level: 'high', duration_seconds: 7200, remark: '', dispatch: true })
 
 const STATUS_OPTIONS = [
@@ -120,6 +138,19 @@ function sourceTooltip(row) {
   return parts.join(' · ')
 }
 
+function geoTitle(row) {
+  const parts = [row.geo_country, row.geo_region].filter(Boolean)
+  if (row.geo_isp) parts.push(row.geo_isp)
+  return parts.join(' · ')
+}
+
+async function loadCountries() {
+  try {
+    const data = await api.iocGeoCountries()
+    countries.value = data.items || []
+  } catch (e) { countries.value = [] }
+}
+
 async function load() {
   loading.value = true
   try {
@@ -137,6 +168,7 @@ async function submit() {
     dialog.value = false
     form.ioc_value = ''
     load()
+    loadCountries()
   } catch (e) { /* 拦截器已提示 */ }
 }
 async function remove(row) {
@@ -146,5 +178,5 @@ async function remove(row) {
     load()
   } catch (e) { /* 拦截器已提示 */ }
 }
-onMounted(load)
+onMounted(() => { load(); loadCountries() })
 </script>

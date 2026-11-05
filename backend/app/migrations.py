@@ -24,6 +24,14 @@ CARRY_COLUMNS = [
     "created_at", "updated_at",
 ]
 
+# 归属地快照字段（v2 新增）。放这里而不是只在 models 里，是为了老库能补列。
+GEO_COLUMNS = {
+    "geo_country": "VARCHAR(64)",
+    "geo_province": "VARCHAR(64)",
+    "geo_city": "VARCHAR(64)",
+    "geo_isp": "VARCHAR(64)",
+}
+
 
 def _columns(engine: Engine, table: str) -> list[str]:
     return [col["name"] for col in inspect(engine).get_columns(table)]
@@ -73,7 +81,11 @@ def _finish_interrupted_upgrade(engine: Engine) -> None:
 
 
 def upgrade_sqlite_schema(engine: Engine) -> None:
-    """把旧版 ioc_indicator（同值唯一）升级成流水表（允许重复）。"""
+    """SQLite 启动升级：旧版同值唯一 → 流水表，再补齐后续新增列。
+
+    两步都必须在每次启动时检查：重建用 `_has_unique_ioc_key` 判定，
+    加列用列名判定。这样既能升级很老的库，也能让只差几列的中途版本补齐。
+    """
     _finish_interrupted_upgrade(engine)
 
     inspector = inspect(engine)
@@ -81,14 +93,20 @@ def upgrade_sqlite_schema(engine: Engine) -> None:
         return
 
     columns = _columns(engine, "ioc_indicator")
-    if "source_type" in columns and not _has_unique_ioc_key(engine, "ioc_indicator"):
-        return
+    if "source_type" not in columns or _has_unique_ioc_key(engine, "ioc_indicator"):
+        _rebuild_as_history_table(engine, columns)
 
+    _ensure_columns(engine, "ioc_indicator", GEO_COLUMNS)
+    _ensure_geo_index(engine)
+
+
+def _rebuild_as_history_table(engine: Engine, columns: list[str]) -> None:
     logger.warning("检测到旧版 ioc_indicator，开始重建为流水表（保留历史数据）")
     from app.database import Base
     from app import models  # noqa: F401  确保模型已注册
 
     # 重命名后旧索引会跟着走，名字要先释放，否则新表建同名索引会冲突
+    inspector = inspect(engine)
     legacy_indexes = [
         idx["name"] for idx in inspector.get_indexes("ioc_indicator") if idx.get("name")
     ]
@@ -102,3 +120,23 @@ def upgrade_sqlite_schema(engine: Engine) -> None:
         conn.execute(text(_copy_sql(columns)))
         conn.execute(text(f"DROP TABLE {LEGACY}"))
     logger.warning("ioc_indicator 重建完成：同值不再合并，历史记录来源标记为 GRAYLOG/MANUAL")
+
+
+def _ensure_columns(engine: Engine, table: str, columns: dict[str, str]) -> None:
+    """按需 ALTER TABLE ADD COLUMN（SQLite 加列不改数据，成本极低、可重入）。"""
+    existing = set(_columns(engine, table))
+    missing = {name: ddl for name, ddl in columns.items() if name not in existing}
+    if not missing:
+        return
+    with engine.begin() as conn:
+        for name, ddl in missing.items():
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+    logger.warning("%s 补充字段：%s", table, ", ".join(missing))
+
+
+def _ensure_geo_index(engine: Engine) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text('CREATE INDEX IF NOT EXISTS "idx_ioc_geo" ON ioc_indicator (geo_country)')
+        )
+

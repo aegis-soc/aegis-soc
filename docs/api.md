@@ -109,7 +109,8 @@ RBAC 角色：
 
 `GET /ioc/ips` 支持 `status`（`active` / `rejected` / `whitelisted` / `expired` / `disabled`）、
 `source_type`（`IPS` / `WAF` / `ZTNA` / `TI` / `GRAYLOG` / `MANUAL` / `API` …）、
-`keyword`（匹配 IP、备注、来源明细、告警 ID）三个过滤条件。
+`country`（归属国家精确匹配，如 `中国`）、
+`keyword`（匹配 IP、备注、来源明细、告警 ID、国家/省/市）四个过滤条件。
 
 列表项在原有字段外新增：
 
@@ -120,6 +121,16 @@ RBAC 角色：
 | `source_detail` | 来源原始标识：设备名 / stream / vendor |
 | `alert_id` | 触发该记录的告警 ID |
 | `reject_reason` | 被拦截/豁免的原因，或到期未解封的说明 |
+| `geo_country` | 归属国家（中文，如 `中国` / `美国`；内网地址为 `内网`） |
+| `geo_province` / `geo_city` | 归属省 / 市，境外为英文原文 |
+| `geo_isp` | 运营商（如 `电信`、`Google LLC`），库中无则为 `null` |
+| `geo_region` | `geo_province` 与 `geo_city` 合成的展示字段（直辖市去重） |
+
+> 归属地为**写入时快照**，来自 ip2region 离线库；库未安装时该组字段为 `null`，
+> 不影响入库与封禁。详见 `docs/geoip.md`。
+
+`GET /ioc/geo/countries` 返回归属国家下拉选项（按记录数倒序，最多 50 个）：
+`{"items": [{"country": "美国", "count": 3}, ...]}`。
 
 > 黑名单是**流水表，同值不合并**：同一 IP 多次命中会生成多条记录，
 > 各自带添加时间与过期时间。规则细节见 `docs/blacklist-history.md`。

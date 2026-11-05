@@ -6,6 +6,12 @@
 
 ### Added
 
+- **IP 归属地（国家 / 省·市）**：黑名单新增「国家」「地区」两列，数据来自 ip2region 离线库（`backend/data/ip2region_v4.xdb`，约 11 MB），国内城市级中文、境外 ISO 码映射中文国名；内网地址直接标「内网」，RFC5737 保留段标「保留地址」
+- **归属地快照落库**：`ioc_indicator` 新增 `geo_country` / `geo_province` / `geo_city` / `geo_isp`，写入时查一次并固化，库更新不改写历史记录；老记录由 `scripts/backfill_geo.py` 幂等回填
+- **归属地运维工具**：`scripts/fetch_geoip.py` 多镜像下载 xdb（jsdelivr / ghfast / GitHub，直连与代理都试，校验文件头与体积后才替换）；服务按 mtime 热加载，换库不重启
+- **按国家筛选**：`GET /ioc/ips?country=中国`、`GET /ioc/geo/countries`（带记录数的下拉选项），关键字搜索覆盖国家/省/市
+- **文档** `docs/geoip.md`：为什么放弃 ipip.net、数据格式、更新节奏、精度局限与排障；`GET /api/healthz` 增加 `geoip` 就绪状态
+
 - **黑名单改为流水表（同值不合并）**：去掉 `ioc_indicator` 上的 `uk_ioc(ioc_type, normalized_value)` 唯一键，同一 IP 每次命中都新增一条记录，各自保留添加时间、过期时间、来源告警；解决「设备不支持按 IP 解封、只能等到期失效」场景下无法判断哪次下发还在生效的问题
 - **来源字段** `source_type` / `source_detail` / `alert_id`：从 Graylog 告警的 `device_type` / `device_name` / `product` / `vendor` / `stream` 等字段识别来源，统一归类为 `IPS` / `WAF` / `ZTNA` / `TI` / `NTA` / `AV` / `FW` / `GRAYLOG`，界面「来源」列展示分类，悬浮显示设备名与告警 ID
 - **被拦截 IOC 留痕**：内网/保留地址、白名单命中的 IOC 以 `status=rejected` / `whitelisted` 写入黑名单表并记录 `reject_reason`，不下发任务；列表与看板（新增 `ioc_rejected` 统计）可直接回答「为什么这个攻击 IP 没被封」
@@ -31,6 +37,8 @@
 
 ### Changed
 
+- **配置项** 新增 `GEOIP_ENABLED`（默认 true）与 `GEOIP_DB_PATH`；库缺失或依赖未安装时归属地留空，**不影响告警入库与封禁**
+- **依赖** 增加 `py-ip2region>=3.0.6`（纯 Python，约 10 KB）；`docker` / 部署环境需执行一次 `python scripts/fetch_geoip.py`
 - **黑名单界面**：新增「添加时间」「来源」列，状态增加 `rejected` / `whitelisted` 筛选项，拦截原因以状态悬浮提示展示；`GET /ioc/ips`、`GET /ioc/domains` 支持 `source_type` 过滤，`keyword` 扩展到来源明细与告警 ID；看板活跃黑名单卡片补充「被拦截」数量
 - **解封链路按 IP 去重**：同 IP 多条流水记录时，到期扫描与白名单批量解封只对该 IP 下发一次 `UNBLOCK`；若同 IP 仍有更晚到期的记录在生效，则只标记过期、不解封；手动解封一条记录会同步把该 IP 其它 `active` 记录置为 `disabled`
 - **设备配置改成可视化表单**：选择插件后，界面按插件的 `config_schema` 自动生成表单——地址类字段置顶为「① 设备连接」，业务参数归「② 业务参数」，`int` 渲染数字框、`bool` 渲染开关、`a | b` 渲染下拉、`object` 渲染 JSON 输入；说明里的「必填」「默认 xxx」自动转成校验与预填值；保留「高级模式」可切回原始 JSON 双向同步；设备列表新增「设备地址」列与「编辑」按钮；弹窗内新增「测试连接」，保存前即可验证地址与凭据
