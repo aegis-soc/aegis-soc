@@ -13,7 +13,7 @@
 
     <div class="stat-grid">
       <div class="stat-card"><div class="stat-label">今日告警</div><div class="stat-value">{{ data.alerts_today }}</div><div class="stat-hint">累计 {{ data.alerts_total }} 条</div></div>
-      <div class="stat-card"><div class="stat-label">活跃黑名单</div><div class="stat-value">{{ data.ioc_active }}</div><div class="stat-hint">已过期 {{ data.ioc_expired }}</div></div>
+      <div class="stat-card"><div class="stat-label">活跃黑名单</div><div class="stat-value">{{ data.ioc_active }}</div><div class="stat-hint">已过期 {{ data.ioc_expired }} · 被拦截 {{ data.ioc_rejected }}</div></div>
       <div class="stat-card"><div class="stat-label">白名单</div><div class="stat-value">{{ data.whitelist_count }}</div><div class="stat-hint">受保护地址 / 网段</div></div>
       <div class="stat-card"><div class="stat-label">在线设备</div><div class="stat-value">{{ data.device_online }}</div><div class="stat-hint">共 {{ data.device_total }} 台</div></div>
       <div class="stat-card"><div class="stat-label">待处理任务</div><div class="stat-value">{{ data.task_pending }}</div><div class="stat-hint">含重试与待审批</div></div>
@@ -51,7 +51,7 @@ import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../api'
 
 const data = reactive({
-  alerts_today: 0, alerts_total: 0, ioc_active: 0, ioc_expired: 0,
+  alerts_today: 0, alerts_total: 0, ioc_active: 0, ioc_expired: 0, ioc_rejected: 0,
   whitelist_count: 0, device_online: 0, device_total: 0,
   task_pending: 0, task_success: 0, task_failed: 0, task_total: 0,
   kill_switch: false, risk_distribution: {}, recent_alerts: [],

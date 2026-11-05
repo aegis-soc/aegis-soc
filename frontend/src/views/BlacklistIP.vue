@@ -1,30 +1,48 @@
 <template>
   <div class="page">
     <div class="page-header">
-      <div><h2 class="page-title">IP 黑名单</h2><p class="page-desc">受管攻击 IP，删除时自动生成解封任务；白名单与内网地址禁止加入</p></div>
+      <div><h2 class="page-title">IP 黑名单</h2><p class="page-desc">同一 IP 多次命中按流水记录保存，不合并；被拦截的 IOC 也会留痕，状态为 rejected / whitelisted</p></div>
       <el-button type="primary" :icon="Plus" @click="dialog = true">新增黑名单</el-button>
     </div>
     <div class="filter-bar">
       <el-select v-model="query.status" placeholder="状态" clearable style="width: 140px">
-        <el-option v-for="s in ['active','expired','disabled']" :key="s" :label="s" :value="s" />
+        <el-option v-for="s in STATUS_OPTIONS" :key="s.value" :label="s.label" :value="s.value" />
       </el-select>
-      <el-input v-model="query.keyword" placeholder="IP / 备注关键字" clearable style="width: 220px" @keyup.enter="load" />
+      <el-select v-model="query.source_type" placeholder="来源" clearable style="width: 130px">
+        <el-option v-for="s in SOURCE_OPTIONS" :key="s.value" :label="s.label" :value="s.value" />
+      </el-select>
+      <el-input v-model="query.keyword" placeholder="IP / 设备名 / 告警ID / 备注" clearable style="width: 240px" @keyup.enter="load" />
       <el-button type="primary" @click="load">查询</el-button>
     </div>
     <div class="table-card">
       <el-table :data="rows" size="small" stripe v-loading="loading">
-        <el-table-column prop="normalized_value" label="IP / CIDR" min-width="150" class-name="mono" />
-        <el-table-column prop="risk_level" label="风险" width="90" />
-        <el-table-column prop="confidence" label="置信度" width="90" />
-        <el-table-column prop="status" label="状态" width="100">
-          <template #default="{ row }"><el-tag size="small" :type="row.status === 'active' ? 'danger' : 'info'">{{ row.status }}</el-tag></template>
+        <el-table-column prop="normalized_value" label="IP / CIDR" min-width="140" class-name="mono" fixed />
+        <el-table-column label="来源" width="120">
+          <template #default="{ row }">
+            <el-tooltip :content="sourceTooltip(row)" placement="top">
+              <el-tag size="small" :type="SOURCE_TAG[row.source_type] || 'info'">{{ SOURCE_LABEL[row.source_type] || row.source_type || '未知' }}</el-tag>
+            </el-tooltip>
+          </template>
         </el-table-column>
-        <el-table-column prop="source_count" label="来源数" width="80" />
-        <el-table-column prop="expire_at" label="过期时间" width="170" />
-        <el-table-column prop="remark" label="备注" min-width="160" show-overflow-tooltip />
+        <el-table-column label="状态" width="110">
+          <template #default="{ row }">
+            <el-tooltip :content="row.reject_reason || statusLabel(row.status)" placement="top">
+              <el-tag size="small" :type="STATUS_TAG[row.status] || 'info'">{{ statusLabel(row.status) }}</el-tag>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+        <el-table-column prop="risk_level" label="风险" width="80" />
+        <el-table-column prop="confidence" label="置信度" width="80" />
+        <el-table-column label="添加时间" width="160">
+          <template #default="{ row }">{{ fmt(row.created_at) }}</template>
+        </el-table-column>
+        <el-table-column label="过期时间" width="160">
+          <template #default="{ row }">{{ fmt(row.expire_at) || '永久' }}</template>
+        </el-table-column>
+        <el-table-column prop="remark" label="备注 / 原因" min-width="200" show-overflow-tooltip />
         <el-table-column label="操作" width="100" fixed="right">
           <template #default="{ row }">
-            <el-popconfirm title="删除将自动生成解封任务，确认？" @confirm="remove(row)">
+            <el-popconfirm :title="row.status === 'active' ? '删除将自动生成解封任务，确认？' : '删除这条留痕记录？'" @confirm="remove(row)">
               <template #reference><el-button link type="danger">删除</el-button></template>
             </el-popconfirm>
           </template>
@@ -59,8 +77,48 @@ const rows = ref([])
 const total = ref(0)
 const loading = ref(false)
 const dialog = ref(false)
-const query = reactive({ page: 1, page_size: 20, status: '', keyword: '' })
+const query = reactive({ page: 1, page_size: 20, status: '', source_type: '', keyword: '' })
 const form = reactive({ ioc_value: '', confidence: 80, risk_level: 'high', duration_seconds: 7200, remark: '', dispatch: true })
+
+const STATUS_OPTIONS = [
+  { value: 'active', label: '已下发' },
+  { value: 'rejected', label: '被拦截' },
+  { value: 'whitelisted', label: '白名单豁免' },
+  { value: 'expired', label: '已过期' },
+  { value: 'disabled', label: '已解封' },
+]
+const STATUS_TAG = { active: 'danger', rejected: 'warning', whitelisted: 'info', expired: 'info', disabled: 'info' }
+const STATUS_LABEL = Object.fromEntries(STATUS_OPTIONS.map((s) => [s.value, s.label]))
+
+const SOURCE_OPTIONS = [
+  { value: 'IPS', label: 'IPS 入侵防御' },
+  { value: 'WAF', label: 'WAF' },
+  { value: 'ZTNA', label: '零信任' },
+  { value: 'TI', label: '威胁情报' },
+  { value: 'NTA', label: '态势感知' },
+  { value: 'AV', label: '防病毒' },
+  { value: 'FW', label: '防火墙' },
+  { value: 'GRAYLOG', label: 'Graylog' },
+  { value: 'MANUAL', label: '手工添加' },
+  { value: 'API', label: 'API' },
+  { value: 'UNKNOWN', label: '未识别' },
+]
+const SOURCE_LABEL = Object.fromEntries(SOURCE_OPTIONS.map((s) => [s.value, s.label]))
+const SOURCE_TAG = { IPS: 'danger', WAF: 'warning', ZTNA: 'primary', TI: 'danger', NTA: 'warning', AV: 'warning', FW: 'primary', MANUAL: 'info', GRAYLOG: 'info', API: 'info' }
+
+function statusLabel(status) {
+  return STATUS_LABEL[status] || status
+}
+function fmt(value) {
+  if (!value) return ''
+  return String(value).replace('T', ' ').slice(0, 19)
+}
+function sourceTooltip(row) {
+  const parts = [row.source_type || 'UNKNOWN']
+  if (row.source_detail) parts.push(row.source_detail)
+  if (row.alert_id) parts.push(`告警 ${row.alert_id}`)
+  return parts.join(' · ')
+}
 
 async function load() {
   loading.value = true

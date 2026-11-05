@@ -89,12 +89,16 @@ def _create_ioc(
     if expire_at is None and body.duration_seconds:
         expire_at = utcnow() + timedelta(seconds=body.duration_seconds)
 
+    # 手动新增与告警自动处置不同：同值只复用「仍在生效」的那条记录，
+    # 已过期的历史流水保留不动，避免把历史记录改写成新的。
     row = (
         db.query(IocIndicator)
         .filter(
             IocIndicator.ioc_type == ioc_type,
             IocIndicator.normalized_value == check.normalized,
+            IocIndicator.status == "active",
         )
+        .order_by(IocIndicator.created_at.desc(), IocIndicator.id.desc())
         .first()
     )
     created = row is None
@@ -104,6 +108,8 @@ def _create_ioc(
             ioc_value=check.normalized,
             normalized_value=check.normalized,
             created_by=user.username,
+            source_type="MANUAL",
+            source_detail=f"console:{user.username}",
             source_count=1,
         )
         db.add(row)
@@ -128,6 +134,7 @@ def _create_ioc(
                 )
             )
     row.status = "active"
+    row.reject_reason = None
     row.confidence = body.confidence if body.confidence is not None else row.confidence
     row.risk_level = body.risk_level or row.risk_level
     row.expire_at = expire_at or row.expire_at
@@ -160,15 +167,34 @@ def _create_ioc(
 def _unblock_ioc(db: Session, row: IocIndicator, request: Request, user: SystemUser) -> int:
     request_id = f"manual-{uuid.uuid4().hex[:16]}"
     task_ids: list[int] = []
-    for device in match_devices(db, row.ioc_type, "UNBLOCK"):
-        task = create_task(db, ioc=row, device=device, operation="UNBLOCK", request_id=request_id)
-        if task:
-            task_ids.append(task.id)
+    # 只有真正下发过的 active 记录才需要解封；rejected / whitelisted 只是留痕
+    if row.status == "active":
+        for device in match_devices(db, row.ioc_type, "UNBLOCK"):
+            task = create_task(db, ioc=row, device=device, operation="UNBLOCK", request_id=request_id)
+            if task:
+                task_ids.append(task.id)
     row.status = "disabled"
+
+    # 同 IP 可能有多条流水（同值不合并），设备侧按 IP 解封后其它活跃记录一并置为 disabled，
+    # 否则列表会出现「仍显示 active 但设备上已经解封」的假象。
+    siblings = (
+        db.query(IocIndicator)
+        .filter(
+            IocIndicator.ioc_type == row.ioc_type,
+            IocIndicator.normalized_value == row.normalized_value,
+            IocIndicator.status == "active",
+            IocIndicator.id != row.id,
+        )
+        .all()
+    )
+    for sibling in siblings:
+        sibling.status = "disabled"
+        sibling.reject_reason = f"随记录 {row.id} 一并解封"
+
     write_audit(
         db, "IOC_MANUAL_UNBLOCK", operator=user.username, role_code=user.role_code,
         target_type=row.ioc_type, target_id=row.id,
-        content={"value": row.normalized_value, "task_count": len(task_ids)},
+        content={"value": row.normalized_value, "task_count": len(task_ids), "siblings": len(siblings)},
         client_ip=client_ip(request),
     )
     db.commit()
@@ -183,18 +209,23 @@ def _list_ioc(
     page_size: int,
     status: str | None,
     keyword: str | None,
+    source_type: str | None = None,
 ):
     stmt = select(IocIndicator).where(IocIndicator.ioc_type == ioc_type)
     if status:
         stmt = stmt.where(IocIndicator.status == status)
+    if source_type:
+        stmt = stmt.where(IocIndicator.source_type == source_type)
     if keyword:
         stmt = stmt.where(
             or_(
                 IocIndicator.normalized_value.like(f"%{keyword}%"),
                 IocIndicator.remark.like(f"%{keyword}%"),
+                IocIndicator.source_detail.like(f"%{keyword}%"),
+                IocIndicator.alert_id.like(f"%{keyword}%"),
             )
         )
-    stmt = stmt.order_by(IocIndicator.created_at.desc())
+    stmt = stmt.order_by(IocIndicator.created_at.desc(), IocIndicator.id.desc())
     rows, total = paginate(stmt, db, page, page_size)
     return ok({
         "items": [IocOut.model_validate(r).model_dump(mode="json") for r in rows],
@@ -208,10 +239,11 @@ def list_ip_ioc(
     page_size: int = Query(20, ge=1, le=200),
     status: str | None = None,
     keyword: str | None = None,
+    source_type: str | None = None,
     db: Session = Depends(get_db),
     _=Depends(require_perms("ioc:read")),
 ):
-    return _list_ioc("IP", db, page, page_size, status, keyword)
+    return _list_ioc("IP", db, page, page_size, status, keyword, source_type)
 
 
 @router.post("/ioc/ips")
@@ -273,10 +305,11 @@ def list_domain_ioc(
     page_size: int = Query(20, ge=1, le=200),
     status: str | None = None,
     keyword: str | None = None,
+    source_type: str | None = None,
     db: Session = Depends(get_db),
     _=Depends(require_perms("ioc:read")),
 ):
-    return _list_ioc("DOMAIN", db, page, page_size, status, keyword)
+    return _list_ioc("DOMAIN", db, page, page_size, status, keyword, source_type)
 
 
 @router.post("/ioc/domains")

@@ -6,6 +6,12 @@
 
 ### Added
 
+- **黑名单改为流水表（同值不合并）**：去掉 `ioc_indicator` 上的 `uk_ioc(ioc_type, normalized_value)` 唯一键，同一 IP 每次命中都新增一条记录，各自保留添加时间、过期时间、来源告警；解决「设备不支持按 IP 解封、只能等到期失效」场景下无法判断哪次下发还在生效的问题
+- **来源字段** `source_type` / `source_detail` / `alert_id`：从 Graylog 告警的 `device_type` / `device_name` / `product` / `vendor` / `stream` 等字段识别来源，统一归类为 `IPS` / `WAF` / `ZTNA` / `TI` / `NTA` / `AV` / `FW` / `GRAYLOG`，界面「来源」列展示分类，悬浮显示设备名与告警 ID
+- **被拦截 IOC 留痕**：内网/保留地址、白名单命中的 IOC 以 `status=rejected` / `whitelisted` 写入黑名单表并记录 `reject_reason`，不下发任务；列表与看板（新增 `ioc_rejected` 统计）可直接回答「为什么这个攻击 IP 没被封」
+- **迁移脚本** `sql/migrate_20261105_ioc_history.sql`：MySQL 可重复执行，补字段 → 删唯一键改 `idx_ioc_value` → 回填历史来源；SQLite 由 `app/migrations.py` 在启动时自动升级，分步可重入，中途失败下次启动自动补齐
+- **说明文档** `docs/blacklist-history.md`：为什么不再合并、状态机、解封去重规则、升级步骤与常见问题
+
 - **阿里云 WAF 3.0 插件** `aliyun_waf_v3`：`DefenseScene=ip_blacklist`，`DescribeDefenseRules` 取全量 → 合并 → `ModifyDefenseRule` 整表回写；单规则 200 条上限（官方限制）自动分片为 `aegis-block-N`；已存在 IP 幂等跳过；写入后回读确认，避免并发覆盖导致漏封；空规则自动停用；RAM 最小权限，AK 只走 `credential_ref`，签名用 RPC HMAC-SHA1 不引入 SDK
 - **插件不建模板，只推 IP**：模板由人工在 WAF 控制台预建，插件只往 `template_id` 下的 `ip_blacklist` 规则写 IP；连通性测试新增 `DescribeDefenseTemplate` 校验模板存在且场景为 `ip_blacklist`，模板 ID 填错会明确失败；新增 `auto_create_rule`（默认 `true`），设为 `false` 后连分片规则也不自动建，全部由人工建好再推
 - **接入指南** `docs/plugins-aliyun-waf.md`：容量与分片规则、RAM 权限策略、模板 ID 获取、配置示例与五步验证
@@ -25,6 +31,8 @@
 
 ### Changed
 
+- **黑名单界面**：新增「添加时间」「来源」列，状态增加 `rejected` / `whitelisted` 筛选项，拦截原因以状态悬浮提示展示；`GET /ioc/ips`、`GET /ioc/domains` 支持 `source_type` 过滤，`keyword` 扩展到来源明细与告警 ID；看板活跃黑名单卡片补充「被拦截」数量
+- **解封链路按 IP 去重**：同 IP 多条流水记录时，到期扫描与白名单批量解封只对该 IP 下发一次 `UNBLOCK`；若同 IP 仍有更晚到期的记录在生效，则只标记过期、不解封；手动解封一条记录会同步把该 IP 其它 `active` 记录置为 `disabled`
 - **设备配置改成可视化表单**：选择插件后，界面按插件的 `config_schema` 自动生成表单——地址类字段置顶为「① 设备连接」，业务参数归「② 业务参数」，`int` 渲染数字框、`bool` 渲染开关、`a | b` 渲染下拉、`object` 渲染 JSON 输入；说明里的「必填」「默认 xxx」自动转成校验与预填值；保留「高级模式」可切回原始 JSON 双向同步；设备列表新增「设备地址」列与「编辑」按钮；弹窗内新增「测试连接」，保存前即可验证地址与凭据
 - **后端新增结构化字段描述** `build_config_fields()`（`plugins/base.py`）：由 `config_schema` + `required_config` 推导 `key / label / group / type / required / options / default / description`，`/api/v1/plugins` 直接返回，新增插件无需改前端；凭据类字段（`credential_ref`/`password`/`api_key`/`access_key_secret`）从表单中剔除
 - **凭据解析抽出 `apply_credential()`**：`/plugins/test` 支持在设备保存前按 `credential_ref` 读取环境变量，未设置时返回「凭据环境变量 XXX 未设置」而不是 500

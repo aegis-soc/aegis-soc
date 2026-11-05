@@ -26,6 +26,7 @@ venv/
 .coverage
 htmlcov/
 *.db
+*.db.bak*
 *.sqlite3
 
 # ---------- Node ----------

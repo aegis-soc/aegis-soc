@@ -96,22 +96,27 @@ CREATE TABLE IF NOT EXISTS `ioc_indicator` (
   `ioc_type`          VARCHAR(16)  NOT NULL COMMENT 'IP / DOMAIN / URL / HASH',
   `ioc_value`         VARCHAR(512) NOT NULL COMMENT '原始值',
   `normalized_value`  VARCHAR(512) NOT NULL COMMENT '归一化值（IP 压缩、域名小写去尾点）',
-  `status`            VARCHAR(16)  NOT NULL DEFAULT 'active' COMMENT 'active / expired / disabled',
+  `status`            VARCHAR(16)  NOT NULL DEFAULT 'active' COMMENT 'active / rejected / whitelisted / expired / disabled',
   `confidence`        DECIMAL(5,2) NULL,
   `risk_level`        VARCHAR(16)  NULL,
   `expire_at`         DATETIME(3)  NULL COMMENT 'NULL = 永久；到期由 Celery Beat 生成解封任务',
   `tags`              JSON         NULL,
   `remark`            VARCHAR(500) NULL,
+  `source_type`       VARCHAR(24)  NOT NULL DEFAULT 'UNKNOWN' COMMENT 'IPS / WAF / ZTNA / TI / AV / FW / NTA / GRAYLOG / MANUAL / API',
+  `source_detail`     VARCHAR(128) NULL COMMENT '来源原始标识：设备名 / stream / vendor',
+  `alert_id`          VARCHAR(128) NULL COMMENT '关联告警 ID',
+  `reject_reason`     VARCHAR(255) NULL COMMENT '被拦截或豁免的原因',
   `source_count`      INT          NOT NULL DEFAULT 0,
   `created_by`        VARCHAR(64)  NULL,
   `created_at`        DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `updated_at`        DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_ioc` (`ioc_type`, `normalized_value`),
+  KEY `idx_ioc_value` (`ioc_type`, `normalized_value`),
   KEY `idx_ioc_status` (`status`),
   KEY `idx_ioc_expire` (`expire_at`),
-  KEY `idx_ioc_type` (`ioc_type`)
-) ENGINE=InnoDB COMMENT='IOC 主表（黑名单）';
+  KEY `idx_ioc_type` (`ioc_type`),
+  KEY `idx_ioc_source` (`source_type`)
+) ENGINE=InnoDB COMMENT='IOC 主表（黑名单流水，同值不合并）';
 
 CREATE TABLE IF NOT EXISTS `ioc_ip_detail` (
   `id`             BIGINT NOT NULL AUTO_INCREMENT,

@@ -44,6 +44,9 @@ def dashboard(
             alerts_total=_count(AlertEvent),
             ioc_active=_count(IocIndicator, IocIndicator.status == "active"),
             ioc_expired=_count(IocIndicator, IocIndicator.status == "expired"),
+            ioc_rejected=_count(
+                IocIndicator, IocIndicator.status.in_(["rejected", "whitelisted"])
+            ),
             whitelist_count=_count(IpWhitelist, IpWhitelist.status == 1),
             device_online=_count(SecurityDevice, SecurityDevice.status == "online"),
             device_total=_count(SecurityDevice),

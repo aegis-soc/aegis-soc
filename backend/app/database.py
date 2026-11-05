@@ -60,5 +60,8 @@ def get_db() -> Generator[Session, None, None]:
 def init_db() -> None:
     """仅用于 SQLite / 测试环境；MySQL 由 sql/init.sql + sql/seed.sql 初始化。"""
     from app import models  # noqa: F401  确保全部模型注册到 Base.metadata
+    from app.migrations import upgrade_sqlite_schema
 
+    if settings.is_sqlite:
+        upgrade_sqlite_schema(engine)
     Base.metadata.create_all(bind=engine)

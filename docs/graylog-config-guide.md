@@ -83,9 +83,29 @@ Graylog 默认推送的 JSON 大致如下（平台按字段容错解析，不依
 | 置信度 | `confidence` / `threat_confidence` / `event.confidence` | `80.0` |
 | IP IOC | 键名 `src_ip` `source_ip` `attack_ip` `attacker_ip` `client_ip` `ip` `src` 等；同时从 `message` 文本正则提取 | 无 |
 | 域名 IOC | 键名 `domain` `hostname` `host` `fqdn` `dns_name` | 无 |
+| 来源分类 | `source_type` / `event_source` / `log_type` / `device_type` / `product` / `vendor` / `device_name` / `syslog_appname` / `stream` / `collector` / `source`，最后才看标题与 message | `GRAYLOG` |
+| 来源明细 | 命中的那个值；优先取 `device_name` → `product` → `vendor` → `stream` → `log_source` | 空 |
 
 **优先级映射**：`1→low`、`2→medium`、`3→high`、`4→critical`。
 **排除键**：`dst_ip` / `dest_ip` / `destination_ip` / `target_ip` / `dip` / `server_ip` 不会被当作攻击源封禁。
+**被拦截也留痕**：内网/保留地址、白名单命中的 IOC 不下发任务，但会在黑名单表留一条
+`status=rejected` / `whitelisted` 的记录，界面可直接看到拦截原因。
+
+**来源分类识别规则**（关键词命中即归类，大小写不敏感，英文按词边界匹配）：
+
+| 分类 | 命中关键词（示例） |
+|---|---|
+| `IPS` | `ips`、入侵防御、天清、ngips、suricata |
+| `WAF` | `waf`、web应用防火墙、modsecurity、雷池 |
+| `ZTNA` | 零信任、`ztna`、`sdp`、`atrust` |
+| `TI` | 威胁情报、`threat_intel`、微步、`threatbook`、`virustotal` |
+| `NTA` | 态势感知、态感、`nta`、全流量、`ndr` |
+| `AV` | 防病毒、`antivirus`、`edr`、终端检测 |
+| `FW` | 防火墙、`firewall`、`fortigate`、`paloalto` |
+
+> 想让黑名单里的「来源」列准确，最省事的做法是在 Graylog 的 Event Definition 里
+> 补一个 `device_type` 或 `device_name` 字段（如 `WAF` / `天清IPS-01` / `零信任网关`），
+> 平台会翻译成统一分类并保留明细；识别不到时记为 `GRAYLOG`。
 
 ## 4. 安全校验
 

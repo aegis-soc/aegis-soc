@@ -68,6 +68,7 @@ class AlertReceiveOut(BaseModel):
     duplicated: bool = False
     ioc_count: int = 0
     task_count: int = 0
+    rejected_count: int = 0
     message: str | None = None
 
 
@@ -119,6 +120,10 @@ class IocOut(_Out):
     expire_at: datetime | None = None
     tags: Any = None
     remark: str | None = None
+    source_type: str = "UNKNOWN"
+    source_detail: str | None = None
+    alert_id: str | None = None
+    reject_reason: str | None = None
     source_count: int
     created_by: str | None = None
     created_at: datetime
@@ -316,6 +321,7 @@ class DashboardOut(BaseModel):
     alerts_total: int
     ioc_active: int
     ioc_expired: int
+    ioc_rejected: int = 0
     whitelist_count: int
     device_online: int
     device_total: int

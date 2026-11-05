@@ -22,6 +22,7 @@
 - ✅ **通用告警接入**：除 Graylog 外提供 `generic` 告警入口，可接 ElastAlert、Suricata 等
 - ✅ **插件化设备网关**：统一接口 + Manifest 能力声明，新增设备只写插件，平台主体不改
 - ✅ **IOC 生命周期**：IP / 域名黑名单、IP 白名单（单 IP / CIDR / 批量导入）、过期自动解封、来源标记、标签备注
+- ✅ **黑名单流水**：同一 IP 每次命中独立成条（同值不合并），各自保留添加时间 / 过期时间 / 来源告警；来自 IPS / WAF / 零信任 / 威胁情报 自动分类；被拦截的地址以 `rejected` 留痕，可回答「为什么没封」
 - ✅ **硬性安全边界**：白名单优先、内网/环回/保留地址禁止封禁、IOC 类型与设备能力匹配、全局熔断开关
 - ✅ **可靠异步任务**：Celery + Beat，幂等约束、指数退避重试、超时控制、到期自动解封
 - ✅ **全链路审计**：人工操作、自动封禁、设备请求/响应报文全留痕，满足等保追溯
@@ -93,6 +94,7 @@ http://<平台地址>/api/v1/alerts/graylog?secret=你的GRAYLOG_WEBHOOK_SECRET
 
 > 无 Graylog 也能完整体验：内置 `mock` 插件 + `docs/graylog-config-guide.md` 里的 `curl` 样例即可跑通「告警 → 策略 → 任务 → 下发 → 到期解封」闭环。
 > Demo 模式（一键拉起 Graylog + ES + MongoDB）规划于 v1.1，见 `docker-compose-demo.yml`。
+> 🗂️ 黑名单为什么按「流水」存、被拦截的地址在哪看：见 [docs/blacklist-history.md](docs/blacklist-history.md)。
 > ☁️ 部署到云服务器？另见 [docs/deploy-cloud.md](docs/deploy-cloud.md)：资源基线、安全组与端口、HTTPS 启用、定时备份、磁盘与日志治理、上线自检清单。
 > ✅ **部署完怎么验？** 一条命令跑完 18 项闭环检查：`python scripts/smoke_test.py --secret <SECRET> --password <口令>`，详见 [docs/verify.md](docs/verify.md)。
 
@@ -111,7 +113,7 @@ aegis-soc/
 ├── frontend/             # Vue3 + Element Plus + Vite
 ├── deploy/               # nginx.conf / my.cnf
 ├── scripts/              # smoke_test.py（部署后一键冒烟验收，仅标准库）
-├── docs/                 # install / deploy-cloud / verify / graylog / plugin-dev / api / security / architecture
+├── docs/                 # install / deploy-cloud / verify / graylog / plugin-dev / api / security / architecture / blacklist-history
 ├── .github/workflows/    # ci.yml（编译+测试+构建+编排校验）、release.yml（tag 触发多架构镜像发布）
 ├── docker-compose.yml
 ├── .env.example

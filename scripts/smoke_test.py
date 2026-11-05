@@ -182,9 +182,35 @@ def main() -> int:
     code, data = http("GET", f"{base}/api/v1/ioc/ips?keyword={PROBE_IP}", token=token,
                       timeout=args.timeout)
     ioc_items = items_of(data)
-    step("黑名单中查到该 IP",
-         any(i.get("normalized_value") == PROBE_IP for i in ioc_items),
-         f"命中 {len(ioc_items)} 条")
+    matched = [i for i in ioc_items if i.get("normalized_value") == PROBE_IP]
+    step("黑名单中查到该 IP", bool(matched), f"命中 {len(matched)} 条")
+    step("记录带来源与添加时间",
+         bool(matched) and all(i.get("source_type") and i.get("created_at") for i in matched),
+         "source_type={} created_at={}".format(
+             matched[0].get("source_type") if matched else "-",
+             matched[0].get("created_at") if matched else "-",
+         ))
+
+    # 内网地址不允许下发，但必须留痕（status=rejected）
+    private_ip = "10.99.99.99"
+    private_payload = {
+        "event_definition_title": "冒烟测试：内网源地址",
+        "event_definition_id": "smoke-ed-private",
+        "event": {
+            "id": f"{alert_id}-private",
+            "priority": 3,
+            "message": f"攻击源 {private_ip} 触发冒烟规则",
+            "fields": {"src_ip": private_ip, "confidence": 90},
+        },
+    }
+    http("POST", url, body=private_payload, timeout=args.timeout)
+    code, data = http(
+        "GET", f"{base}/api/v1/ioc/ips?keyword={private_ip}&status=rejected",
+        token=token, timeout=args.timeout,
+    )
+    rejected = [i for i in items_of(data) if i.get("normalized_value") == private_ip]
+    step("内网地址被拦截并留痕", bool(rejected),
+         rejected[0].get("reject_reason", "") if rejected else "未找到 rejected 记录")
 
     code, data = http("GET", f"{base}/api/v1/tasks?keyword={PROBE_IP}", token=token,
                       timeout=args.timeout)

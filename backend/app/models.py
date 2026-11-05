@@ -102,24 +102,42 @@ class AlertEvent(Base):
 
 
 class IocIndicator(Base):
+    """黑名单流水表：**不做同值合并**。
+
+    同一 IP 今天被封、明天再次命中，是两条独立记录（各自有添加时间、
+    过期时间、来源告警），因为部分设备不支持按 IP 覆盖式解封，
+    只能依赖到期自动失效，必须保留每一次下发的完整上下文。
+    """
+
     __tablename__ = "ioc_indicator"
     __table_args__ = (
-        UniqueConstraint("ioc_type", "normalized_value", name="uk_ioc"),
+        Index("idx_ioc_value", "ioc_type", "normalized_value"),
         Index("idx_ioc_status", "status"),
         Index("idx_ioc_expire", "expire_at"),
         Index("idx_ioc_type", "ioc_type"),
+        Index("idx_ioc_source", "source_type"),
     )
 
     id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
     ioc_type: Mapped[str] = mapped_column(String(16), nullable=False)
     ioc_value: Mapped[str] = mapped_column(String(512), nullable=False)
     normalized_value: Mapped[str] = mapped_column(String(512), nullable=False)
+    # active 已下发 / rejected 校验拦截未下发 / whitelisted 白名单豁免
+    # / expired 已到期 / disabled 已手动解封
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     risk_level: Mapped[str | None] = mapped_column(String(16), nullable=True)
     expire_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     tags: Mapped[Any | None] = mapped_column(JSON, nullable=True)
     remark: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # 来源分类：IPS / WAF / ZTNA / TI / AV / FW / NTA / GRAYLOG / MANUAL / API
+    source_type: Mapped[str] = mapped_column(String(24), nullable=False, default="UNKNOWN")
+    # 来源原始标识（设备名 / stream / vendor 等），用于回溯到底哪台设备报的
+    source_detail: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # 关联告警 ID，便于从一条黑名单直接跳到原始告警
+    alert_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # 状态原因：被拦截/豁免的理由，或到期未解封的说明
+    reject_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     source_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)

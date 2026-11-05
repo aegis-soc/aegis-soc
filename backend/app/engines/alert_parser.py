@@ -13,6 +13,33 @@ PRIORITY_MAP = {1: "low", 2: "medium", 3: "high", 4: "critical"}
 SEVERITY_TO_RISK = {"critical": "critical", "high": "high", "medium": "medium", "low": "low", "info": "low"}
 MESSAGE_KEYS = {"message", "description", "title", "event_definition_title", "summary"}
 
+# 来源识别：Graylog 各输入/stream/设备名里带的标识 → 统一来源分类。
+# 列表顺序即优先级，先命中先返回（IPS/WAF 比通用 FW 更具体）。
+SOURCE_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
+    ("ZTNA", ("零信任", "ztna", "sdp", "atrust", "sangfor-sdp", "aTrust")),
+    ("WAF", ("waf", "web应用防火墙", "web application firewall", "modsecurity", "雷池", "长亭")),
+    ("IPS", ("ips", "入侵防御", "intrusion", "天清", "ngips", "snort", "suricata", "启明星辰")),
+    ("TI", ("威胁情报", "threat_intelligence", "threat-intel", "threat intel", "微步", "threatbook", "virustotal", "vt-intel")),
+    ("AV", ("防病毒", "antivirus", "edr", "终端检测", "病毒", "火绒", "卡巴")),
+    ("NTA", ("态势感知", "态感", "nta", "全流量", "流量分析", "ndr")),
+    ("FW", ("防火墙", "firewall", "fortigate", "paloalto", "pan-os", "深信服af", "sangfor af")),
+    ("GRAYLOG", ("graylog",)),
+]
+
+# 优先读取这些字段判断来源（按顺序覆盖：具体设备类型字段优先于 stream/vendor）
+SOURCE_FIELDS = (
+    "source_type", "event_source", "log_type", "device_type", "source_category",
+    "attack_source", "product", "vendor", "device_name", "syslog_appname",
+    "app_name", "log_source", "stream", "collector", "source",
+)
+SOURCE_TYPES = {"IPS", "WAF", "ZTNA", "TI", "AV", "NTA", "FW", "GRAYLOG", "MANUAL", "API", "UNKNOWN"}
+
+# 来源明细优先取这些字段，比 device_type: "WAF" 更有信息量
+DETAIL_FIELDS = (
+    "device_name", "product", "vendor", "stream", "log_source",
+    "syslog_appname", "collector", "source",
+)
+
 
 @dataclass
 class ParsedAlert:
@@ -26,6 +53,62 @@ class ParsedAlert:
     ioc_candidates: list[dict[str, Any]] = field(default_factory=list)
     source_event_id: str | None = None
     raw_payload: str = ""
+    # 来源分类（IPS/WAF/ZTNA/TI/AV/NTA/FW/GRAYLOG/UNKNOWN）与原始标识
+    source_type: str = "GRAYLOG"
+    source_detail: str | None = None
+
+
+def _match_source(text: str) -> str | None:
+    """把一段文本（设备名/stream/vendor/来源字段）映射成来源分类。"""
+    low = str(text or "").strip().lower()
+    if not low:
+        return None
+    # 已经是我们自己的规范取值（如 Graylog 里直接透传 source_type: "TI"）就直接用
+    if low.upper() in SOURCE_TYPES and low.upper() not in {"UNKNOWN", "GRAYLOG"}:
+        return low.upper()
+    for code, patterns in SOURCE_PATTERNS:
+        for pattern in patterns:
+            if pattern.isascii():
+                # 英文标识按词边界匹配，避免 "vt" 命中 "event" 这类误判
+                if re.search(rf"(?<![a-z0-9]){re.escape(pattern)}(?![a-z0-9])", low):
+                    return code
+            elif pattern in low:
+                return code
+    return None
+
+
+def classify_source(
+    pairs: list[tuple[str, str]],
+    *,
+    fallback: str = "GRAYLOG",
+    extra_texts: list[str] | None = None,
+) -> tuple[str, str | None]:
+    """从告警字段里判定来源分类，返回 (分类, 原始标识)。
+
+    先看明确的设备类型字段，再看 vendor/product，最后才回退到 message 文本。
+    """
+    ordered: list[tuple[str, str]] = []
+    for field_name in SOURCE_FIELDS:
+        ordered.extend([(k, v) for k, v in pairs if k == field_name])
+    for text in extra_texts or []:
+        ordered.append(("_extra", text))
+    ordered.extend([(k, v) for k, v in pairs if k in MESSAGE_KEYS])
+
+    for key, value in ordered:
+        code = _match_source(value)
+        if code:
+            detail_text = ""
+            for detail_field in DETAIL_FIELDS:
+                for k, v in pairs:
+                    if k == detail_field and v.strip():
+                        detail_text = v
+                        break
+                if detail_text:
+                    break
+            detail = (" ".join((detail_text or value).split()))[:128] or None
+            return code, detail
+    return (fallback if fallback in SOURCE_TYPES else "UNKNOWN"), None
+
 
 
 def _walk(node: Any, key: str = "") -> list[tuple[str, str]]:
@@ -122,6 +205,10 @@ def parse_graylog(payload: dict[str, Any]) -> ParsedAlert:
     pairs = _walk(payload)
     ips = _extract_ips(pairs)
     domains = _extract_domains(pairs)
+    source_type, source_detail = classify_source(
+        pairs,
+        extra_texts=[_stringify(_first(payload, "event_definition_title")), _stringify(title)],
+    )
 
     candidates: list[dict[str, Any]] = [
         {"ioc_type": "IP", "value": ip, "confidence": confidence_value} for ip in ips
@@ -141,6 +228,8 @@ def parse_graylog(payload: dict[str, Any]) -> ParsedAlert:
         ioc_candidates=candidates,
         source_event_id=_stringify(_first(payload, "event.id", "id")) or None,
         raw_payload=raw,
+        source_type=source_type,
+        source_detail=source_detail,
     )
 
 
@@ -164,6 +253,12 @@ def parse_generic(data: Any) -> ParsedAlert:
     candidates = [{"ioc_type": "IP", "value": ip, "confidence": confidence} for ip in ips]
     candidates.extend({"ioc_type": "DOMAIN", "value": d, "confidence": confidence} for d in domains)
 
+    source_type, source_detail = classify_source(
+        pairs,
+        fallback="API",
+        extra_texts=[data.source_system or "", data.title or ""],
+    )
+
     return ParsedAlert(
         alert_id=alert_id,
         title=data.title,
@@ -175,4 +270,6 @@ def parse_generic(data: Any) -> ParsedAlert:
         ioc_candidates=candidates,
         source_event_id=alert_id,
         raw_payload=raw,
+        source_type=source_type,
+        source_detail=source_detail,
     )
