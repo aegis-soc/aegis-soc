@@ -107,6 +107,7 @@ aegis-soc/
 │   │       ├── sangfor_ips.py     # 由 Block2.0.txt 提炼，签名 + 配置生效
 │   │       ├── paloalto_fw.py     # PAN-OS 9.1+，user-id + DAG Tag
 │   │       ├── qiming_fw.py       # 天清汉马 Web API，路径/报文参数化
+│   │       ├── qiming_ips.py      # 天清IPS REST v3，SHA256 登录 + block_policy
 │   │       └── aliyun_waf_v3.py   # WAF 3.0 IP 黑名单，整表回写 + 分片
 │   ├── workers/
 │   │   ├── celery_app.py

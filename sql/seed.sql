@@ -34,6 +34,9 @@ INSERT INTO `device_plugin` (`plugin_code`, `plugin_name`, `version`, `manifest`
   ('qiming_fw', '启明星辰 天清汉马 USG', '1.0.0',
    '{"ioc_types":["IP"],"capabilities":["BLOCK","UNBLOCK"],"config_schema":{"base_url":"string","username":"string","credential_ref":"string","login_path":"string","token_path":"string","block_path":"string","unblock_path":"string","save_path":"string","verify_ssl":"bool"},"description":"Web API 登录鉴权 → 黑名单下发 → 可选保存生效"}',
    1, 1, '天清汉马 Web API，路径与报文全参数化，保存失败判失败'),
+  ('qiming_ips', '启明星辰 天清IPS', '1.0.0',
+   '{"ioc_types":["IP","DOMAIN"],"capabilities":["BLOCK"],"config_schema":{"base_url":"string","username":"string","credential_ref":"string","block_type":"int","end_time_minutes":"int","enable":"int","password_hash":"string","sha256_uppercase":"bool","verify_ssl":"bool"},"description":"REST v3：SHA256 口令登录 → JWT → block_policy 封堵，到期由设备自动失效"}',
+   1, 1, 'IPS *080+：登录 SHA256 摘要、JWT 缓存、type=4 封禁 IP、end_time 分钟'),
   ('aliyun_waf_v3', '阿里云 WAF 3.0', '1.0.0',
    '{"ioc_types":["IP"],"capabilities":["BLOCK","UNBLOCK"],"config_schema":{"instance_id":"string","template_id":"int","credential_ref":"string","rule_name":"string","action":"string","max_entries":"int","max_rules":"int","auto_create_rule":"bool","endpoint":"string"},"description":"IP 黑名单：取全量 → 合并 → 整表回写，单规则 200 条自动分片"}',
    1, 1, 'WAF 3.0 ip_blacklist：整表回写、200 条/规则自动分片、写入后回读校验')

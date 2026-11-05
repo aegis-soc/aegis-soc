@@ -9,6 +9,7 @@ from plugins.builtin.http_generic import HttpGenericPlugin
 from plugins.builtin.mock import MockPlugin
 from plugins.builtin.paloalto_fw import PaloAltoFwPlugin
 from plugins.builtin.qiming_fw import QimingFwPlugin
+from plugins.builtin.qiming_ips import QimingIpsPlugin
 from plugins.builtin.sangfor_ips import SangforIpsPlugin
 from plugins.builtin.ssh_firewall import SshFirewallPlugin
 
@@ -20,4 +21,5 @@ def register_builtins(register: Callable[[BasePlugin | type[BasePlugin]], None])
     register(SangforIpsPlugin)
     register(PaloAltoFwPlugin)
     register(QimingFwPlugin)
+    register(QimingIpsPlugin)
     register(AliyunWafV3Plugin)

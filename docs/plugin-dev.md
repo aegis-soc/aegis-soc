@@ -136,6 +136,7 @@ MY_DEVICE_CRED='{"api_key":"your-real-key"}'
 | `sangfor_ips` | `builtin/sangfor_ips.py` | 登录取密钥、SHA256 签名、插入/删除、applyconfig 生效、登出 |
 | `paloalto_fw` | `builtin/paloalto_fw.py` | PAN-OS XML API、user-id + DAG Tag、解析 `status` 属性避免 200 假成功 |
 | `qiming_fw` | `builtin/qiming_fw.py` | Web API 登录（Token 或 Cookie）、路径/报文全参数化、保存生效校验 |
+| `qiming_ips` | `builtin/qiming_ips.py` | 口令 SHA256 登录、JWT 缓存与 401 重登、`block_policy` 按 type 封堵、end_time 分钟语义 |
 | `aliyun_waf_v3` | `builtin/aliyun_waf_v3.py` | RPC 签名、Describe→合并→整表回写、200 条自动分片、写入后回读校验 |
 
 ## 5. 任务执行链路（插件作者需了解）

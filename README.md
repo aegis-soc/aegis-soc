@@ -148,11 +148,12 @@ aegis-soc/
 | `sangfor_ips` | 深信服 IPS 全局黑名单 API（登录 → 签名 → 插入 → 配置生效） | 是 |
 | `paloalto_fw` | Palo Alto PAN-OS：user-id 注册 IP 到 DAG Tag，即时生效免 commit（9.1+） | 是 |
 | `qiming_fw` | 启明星辰天清汉马 USG Web API：登录鉴权 → 黑名单 → 可选保存生效 | 是 |
+| `qiming_ips` | 启明星辰天清IPS REST v3：SHA256 口令登录 → JWT → `block_policy` 封堵，到期由设备自行失效 | 是 |
 | `aliyun_waf_v3` | 阿里云 WAF 3.0 IP 黑名单：取全量 → 合并 → 整表回写，单规则 200 条自动分片（模板需预建，插件只推 IP） | 是 |
 
 > ⚠️ 所有设备地址、账号、口令、API Key **均通过插件配置或环境变量注入，代码中无任何真实凭据**。
-> 开发新插件见 [docs/plugin-dev.md](docs/plugin-dev.md)；PA / 启明见 [docs/plugins-paloalto-qiming.md](docs/plugins-paloalto-qiming.md)，
-> 阿里云 WAF 3.0 见 [docs/plugins-aliyun-waf.md](docs/plugins-aliyun-waf.md)。
+> 开发新插件见 [docs/plugin-dev.md](docs/plugin-dev.md)；PA / 启明防火墙见 [docs/plugins-paloalto-qiming.md](docs/plugins-paloalto-qiming.md)，
+> 启明 IPS 见 [docs/plugins-qiming-ips.md](docs/plugins-qiming-ips.md)，阿里云 WAF 3.0 见 [docs/plugins-aliyun-waf.md](docs/plugins-aliyun-waf.md)。
 
 ---
 
