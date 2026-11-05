@@ -8,6 +8,7 @@ from plugins.base import BasePlugin, PluginResult
 from plugins.builtin.http_generic import HttpGenericPlugin
 from plugins.builtin.sangfor_ips import SangforIpsPlugin
 from plugins.builtin.ssh_firewall import SshFirewallPlugin
+from plugins.context import ActionRequest, DeviceTarget
 
 
 class _NoQueryPlugin(BasePlugin):
@@ -18,16 +19,17 @@ class _NoQueryPlugin(BasePlugin):
     def test_connection(self, config):
         return PluginResult(True, "ok")
 
-    def block(self, ioc_value, ioc_type, config):
+    def block(self, target, req):
         return PluginResult(True, "ok")
 
-    def unblock(self, ioc_value, ioc_type, config):
+    def unblock(self, target, req):
         return PluginResult(True, "ok")
 
 
 def test_default_query_status_is_failure():
     """未实现 QUERY 的插件不能默认返回成功（避免伪造查询结果）。"""
-    result = _NoQueryPlugin().query_status("1.1.1.1", "IP", {})
+    target = DeviceTarget.from_flat({}, plugin_code="no_query")
+    result = _NoQueryPlugin().query_status(target, ActionRequest("QUERY", "1.1.1.1"))
     assert result.success is False
     assert "未实现" in result.message
 
@@ -82,7 +84,7 @@ def test_ssh_block_detects_device_error(monkeypatch):
         plugin, "_send",
         lambda config, commands: ("<H3C>system\n[H3C]blacklist ip 1.1.1.1\n% Invalid input\n[H3C]", True),
     )
-    result = plugin.block("1.1.1.1", "IP", {"host": "10.0.0.1", "username": "u", "password": "p"})
+    result = plugin.execute("BLOCK", "1.1.1.1", "IP", {"host": "10.0.0.1", "username": "u", "password": "p"})
     assert result.success is False
     assert "拒绝执行" in result.message
 
@@ -90,7 +92,7 @@ def test_ssh_block_detects_device_error(monkeypatch):
 def test_ssh_block_detects_prompt_timeout(monkeypatch):
     plugin = SshFirewallPlugin()
     monkeypatch.setattr(plugin, "_send", lambda config, commands: ("login as: ", False))
-    result = plugin.block("1.1.1.1", "IP", {"host": "10.0.0.1", "username": "u", "password": "p"})
+    result = plugin.execute("BLOCK", "1.1.1.1", "IP", {"host": "10.0.0.1", "username": "u", "password": "p"})
     assert result.success is False
     assert "结果未知" in result.message
 
@@ -98,7 +100,7 @@ def test_ssh_block_detects_prompt_timeout(monkeypatch):
 def test_ssh_block_success(monkeypatch):
     plugin = SshFirewallPlugin()
     monkeypatch.setattr(plugin, "_send", lambda config, commands: ("[H3C]blacklist ip 1.1.1.1 timeout 7200\n[H3C]", True))
-    result = plugin.block("1.1.1.1", "IP", {"host": "10.0.0.1", "username": "u", "password": "p"})
+    result = plugin.execute("BLOCK", "1.1.1.1", "IP", {"host": "10.0.0.1", "username": "u", "password": "p"})
     assert result.success is True
 
 
@@ -138,7 +140,7 @@ def test_sangfor_fails_when_apply_not_effective(monkeypatch):
     plugin = SangforIpsPlugin()
     session = _FakeSession()
     monkeypatch.setattr(plugin, "_session", lambda config: (session, "sk", "ak"))
-    result = plugin.block(
+    result = plugin.execute("BLOCK", 
         "1.1.1.1", "IP",
         {"base_url": "https://10.0.0.2:8081", "username": "u", "password": "p"},
     )

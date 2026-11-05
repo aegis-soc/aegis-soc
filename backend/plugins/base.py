@@ -9,6 +9,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from plugins.context import ActionRequest, DeviceTarget
+
 VALID_OPERATIONS = {"BLOCK", "UNBLOCK", "QUERY"}
 
 
@@ -116,17 +118,21 @@ class BasePlugin(ABC):
 
     @abstractmethod
     def test_connection(self, config: dict[str, Any]) -> PluginResult:
-        """连通性测试，不产生任何封禁副作用。"""
+        """连通性测试，不产生任何封禁副作用。
+
+        只验证「能不能连上、凭据对不对」，与具体设备实例无关，
+        因此保持扁平 config 入参，便于界面在保存设备前先测一次。
+        """
 
     @abstractmethod
-    def block(self, ioc_value: str, ioc_type: str, config: dict[str, Any]) -> PluginResult:
-        """下发封禁。"""
+    def block(self, target: DeviceTarget, req: ActionRequest) -> PluginResult:
+        """对某台设备下发封禁。"""
 
     @abstractmethod
-    def unblock(self, ioc_value: str, ioc_type: str, config: dict[str, Any]) -> PluginResult:
-        """下发解封。"""
+    def unblock(self, target: DeviceTarget, req: ActionRequest) -> PluginResult:
+        """对某台设备下发解封。"""
 
-    def query_status(self, ioc_value: str, ioc_type: str, config: dict[str, Any]) -> PluginResult:
+    def query_status(self, target: DeviceTarget, req: ActionRequest) -> PluginResult:
         """默认不实现状态查询：必须显式返回失败，避免伪造“查询成功”。"""
         return PluginResult(
             False,
@@ -136,16 +142,31 @@ class BasePlugin(ABC):
 
     def execute(
         self,
-        operation: str,
-        ioc_value: str,
-        ioc_type: str,
-        config: dict[str, Any],
+        target: DeviceTarget | str,
+        req: ActionRequest | str | None = None,
+        ioc_type: str | None = None,
+        config: dict[str, Any] | None = None,
     ) -> PluginResult:
-        operation = operation.upper()
+        """统一执行入口。
+
+        推荐写法：``execute(DeviceTarget, ActionRequest)`` —— 设备、IOC、动作三者显式。
+        兼容写法：``execute("BLOCK", "1.2.3.4", "IP", config)`` —— 由扁平配置临时构造 target。
+        """
+        if isinstance(target, DeviceTarget):
+            if not isinstance(req, ActionRequest):
+                return PluginResult(False, "execute 需要 ActionRequest 作为第二个参数")
+            device, action = target, req
+        else:
+            device = DeviceTarget.from_flat(config or {}, plugin_code=self.plugin_code)
+            action = ActionRequest(str(target), str(req or ""), str(ioc_type or "IP"))
+
+        operation = action.operation
         if operation not in VALID_OPERATIONS:
             return PluginResult(False, f"不支持的操作: {operation}")
-        if ioc_type not in self.ioc_types:
-            return PluginResult(False, f"插件 {self.plugin_code} 不支持 IOC 类型 {ioc_type}")
+        if action.ioc_type not in self.ioc_types:
+            return PluginResult(
+                False, f"插件 {self.plugin_code} 不支持 IOC 类型 {action.ioc_type}"
+            )
         if operation not in self.capabilities:
             return PluginResult(False, f"插件 {self.plugin_code} 不支持能力 {operation}")
         handler = {
@@ -154,8 +175,8 @@ class BasePlugin(ABC):
             "QUERY": self.query_status,
         }[operation]
         try:
-            self.validate_config(config)
-            return handler(ioc_value, ioc_type, config)
+            self.validate_config(device.config)
+            return handler(device, action)
         except PluginConfigError as exc:
             return PluginResult(False, f"插件配置错误: {exc}")
         except Exception as exc:  # noqa: BLE001 - 插件异常必须收敛为失败结果，避免 worker 崩溃

@@ -29,6 +29,7 @@ import requests
 import urllib3
 
 from plugins.base import BasePlugin, PluginConfigError, PluginResult, as_bool, as_int
+from plugins.context import ActionRequest, DeviceTarget
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -193,9 +194,10 @@ class QimingIpsPlugin(BasePlugin):
             body["block_content"] = ioc_value
         return body
 
-    def block(self, ioc_value: str, ioc_type: str, config: dict[str, Any]) -> PluginResult:
+    def block(self, target: DeviceTarget, req: ActionRequest) -> PluginResult:
+        config = target.config
         self.validate_config(config)
-        body = self._block_body(ioc_value, ioc_type, config)
+        body = self._block_body(req.ioc_value, req.ioc_type, config)
         url = self._url(config, "block_path", BLOCK_PATH)
         try:
             token = self._token(config)
@@ -211,12 +213,13 @@ class QimingIpsPlugin(BasePlugin):
         duration = "永久" if minutes == 0 else f"{minutes} 分钟"
         return PluginResult(
             True,
-            f"封堵成功（type={body['type']}，{ioc_value}，生效 {duration}）",
+            f"封堵成功（{target.code or target.address or '设备'}，"
+            f"type={body['type']}，{req.ioc_value}，生效 {duration}）",
             raw=str(payload)[:4000],
             http_status=response.status_code,
         )
 
-    def unblock(self, ioc_value: str, ioc_type: str, config: dict[str, Any]) -> PluginResult:
+    def unblock(self, target: DeviceTarget, req: ActionRequest) -> PluginResult:
         """设备原生按 end_time 到期失效；未提供删除接口，绝不伪造解封成功。"""
         return PluginResult(
             False,

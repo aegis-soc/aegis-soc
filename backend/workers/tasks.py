@@ -13,6 +13,7 @@ from app.engines.policy import expire_iocs_and_unblock
 from app.engines.validation import resolve_device_config
 from app.models import DeviceTask, DeviceTaskLog, IocDeviceBinding, SecurityDevice
 from plugins import registry
+from plugins.context import ActionRequest, DeviceTarget
 from workers.celery_app import celery_app
 
 logger = logging.getLogger("aegis")
@@ -56,7 +57,28 @@ def execute_task(task_id: int) -> dict[str, Any]:
             return {"success": False, "message": task.result_msg}
 
         config = resolve_device_config(device)
-        result = registry.execute(task.plugin_code, task.operation, task.ioc_value, task.ioc_type, config)
+        target = DeviceTarget.from_flat(
+            config,
+            id=device.id,
+            code=device.device_code,
+            plugin_code=device.plugin_code,
+        )
+        duration = 0
+        if task.expire_at and task.created_at:
+            duration = max(0, int((task.expire_at - task.created_at).total_seconds() // 60))
+        req = ActionRequest(
+            operation=task.operation,
+            ioc_value=task.ioc_value,
+            ioc_type=task.ioc_type,
+            duration_minutes=duration,
+            reason=f"task {task.task_no}",
+        )
+        result = registry.execute(target, req)
+        logger.info(
+            "task=%s device=%s plugin=%s op=%s ioc=%s -> %s",
+            task.task_no, target.code or target.address, target.plugin_code,
+            req.operation, req.ioc_value, "OK" if result.success else "FAIL",
+        )
 
         task.task_status = "RUNNING"
         task.started_at = task.started_at or utcnow()

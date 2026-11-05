@@ -48,7 +48,7 @@ def _patch_pa(monkeypatch, text: str, captured: dict):
 def test_pa_block_registers_ip_with_tag(monkeypatch):
     captured: dict = {}
     _patch_pa(monkeypatch, '<response status="success" code="19"><result/></response>', captured)
-    result = PaloAltoFwPlugin().block("1.2.3.4", "IP", PA_CONFIG)
+    result = PaloAltoFwPlugin().execute("BLOCK", "1.2.3.4", "IP", PA_CONFIG)
     assert result.success is True
     assert captured["params"]["type"] == "user-id"
     assert captured["params"]["key"] == "secret-key"
@@ -61,7 +61,7 @@ def test_pa_block_registers_ip_with_tag(monkeypatch):
 def test_pa_unblock_uses_unregister(monkeypatch):
     captured: dict = {}
     _patch_pa(monkeypatch, '<response status="success" code="19"/>', captured)
-    result = PaloAltoFwPlugin().unblock("1.2.3.4", "IP", PA_CONFIG)
+    result = PaloAltoFwPlugin().execute("UNBLOCK", "1.2.3.4", "IP", PA_CONFIG)
     assert result.success is True
     assert "<unregister>" in captured["body"]
     assert "<register>" not in captured["body"]
@@ -75,7 +75,7 @@ def test_pa_error_status_is_failure_even_on_http_200(monkeypatch):
         '<response status="error" code="13"><msg><line>Invalid credentials</line></msg></response>',
         captured,
     )
-    result = PaloAltoFwPlugin().block("1.2.3.4", "IP", PA_CONFIG)
+    result = PaloAltoFwPlugin().execute("BLOCK", "1.2.3.4", "IP", PA_CONFIG)
     assert result.success is False
     assert "code=13" in result.message
     assert "Invalid credentials" in result.message
@@ -84,7 +84,7 @@ def test_pa_error_status_is_failure_even_on_http_200(monkeypatch):
 def test_pa_non_xml_response_is_failure(monkeypatch):
     captured: dict = {}
     _patch_pa(monkeypatch, "<html>502 Bad Gateway</html", captured)
-    result = PaloAltoFwPlugin().block("1.2.3.4", "IP", PA_CONFIG)
+    result = PaloAltoFwPlugin().execute("BLOCK", "1.2.3.4", "IP", PA_CONFIG)
     assert result.success is False
     assert "非 XML" in result.message
 
@@ -152,7 +152,7 @@ def _patch_qm(monkeypatch, login, block=None, save=None, cookies=None):
 
 def test_qiming_block_with_token_and_save(monkeypatch):
     instances = _patch_qm(monkeypatch, ({"code": 0, "data": {"token": "tk-1"}}, 200))
-    result = QimingFwPlugin().block("5.6.7.8", "IP", QM_CONFIG)
+    result = QimingFwPlugin().execute("BLOCK", "5.6.7.8", "IP", QM_CONFIG)
     assert result.success is True
     session = instances[0]
     urls = [c["url"] for c in session.calls]
@@ -170,7 +170,7 @@ def test_qiming_business_code_failure(monkeypatch):
         ({"code": 0, "data": {"token": "tk-1"}}, 200),
         block={"code": 1001, "msg": "blacklist is full"},
     )
-    result = QimingFwPlugin().block("5.6.7.8", "IP", QM_CONFIG)
+    result = QimingFwPlugin().execute("BLOCK", "5.6.7.8", "IP", QM_CONFIG)
     assert result.success is False
     assert "封禁失败" in result.message
     assert "1001" in result.message
@@ -183,14 +183,14 @@ def test_qiming_save_failure_marks_task_failed(monkeypatch):
         ({"code": 0, "data": {"token": "tk-1"}}, 200),
         save={"code": 500, "msg": "save failed"},
     )
-    result = QimingFwPlugin().block("5.6.7.8", "IP", QM_CONFIG)
+    result = QimingFwPlugin().execute("BLOCK", "5.6.7.8", "IP", QM_CONFIG)
     assert result.success is False
     assert "未保存生效" in result.message
 
 
 def test_qiming_login_http_error(monkeypatch):
     _patch_qm(monkeypatch, ({"code": 401, "msg": "bad password"}, 401))
-    result = QimingFwPlugin().block("5.6.7.8", "IP", QM_CONFIG)
+    result = QimingFwPlugin().execute("BLOCK", "5.6.7.8", "IP", QM_CONFIG)
     assert result.success is False
     assert "登录失败" in result.message
 
@@ -199,7 +199,7 @@ def test_qiming_cookie_only_login(monkeypatch):
     """只发 Cookie 不返回 token 的设备也要能跑通。"""
     config = dict(QM_CONFIG, token_path="")
     instances = _patch_qm(monkeypatch, ({"code": 0}, 200), cookies={"SESSION": "abc"})
-    result = QimingFwPlugin().block("5.6.7.8", "IP", config)
+    result = QimingFwPlugin().execute("BLOCK", "5.6.7.8", "IP", config)
     assert result.success is True
     assert "Authorization" not in instances[0].calls[1]["headers"]
 
@@ -207,7 +207,7 @@ def test_qiming_cookie_only_login(monkeypatch):
 def test_qiming_login_without_token_or_cookie(monkeypatch):
     config = dict(QM_CONFIG, token_path="")
     _patch_qm(monkeypatch, ({"code": 0}, 200))
-    result = QimingFwPlugin().block("5.6.7.8", "IP", config)
+    result = QimingFwPlugin().execute("BLOCK", "5.6.7.8", "IP", config)
     assert result.success is False
     assert "token_path" in result.message
 

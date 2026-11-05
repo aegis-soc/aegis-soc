@@ -25,6 +25,10 @@
 
 ### Changed
 
+- **插件执行接口升级为「设备 + 请求」**（v1.1 P1）：新增 `DeviceTarget`（一台具体设备：`code`/`address`/三层配置/`limits`）与 `ActionRequest`（IOC 与动作），插件方法统一为 `block(target, req)` / `unblock(target, req)` / `query_status(target, req)`；`registry.execute(target, req)` 为推荐入口，旧签名 `execute(code, op, ioc, ioc_type, config)` 仍兼容
+- **设备配置分三层**：`connection`（地址/端口/TLS/超时）、`params`（业务参数）、`secrets`（凭据），支持 `{"connection":{...},"params":{...}}` 分层写法与历史扁平写法混用；合并优先级 `params < connection < secrets`，凭据永远最后覆盖
+- 8 个内置插件全部迁移到新签名；worker 执行时按设备构造 `DeviceTarget`，日志输出 `task / device / plugin / op / ioc / 结果`，排查可直接定位到设备
+- `docs/plugin-dev.md` 更新插件模板与设备配置章节，说明「插件是类型、设备是实例」与分层配置规则
 - **插件层不再"假成功"**：`BasePlugin.query_status()` 默认由返回成功改为返回失败（未实现即失败）；SSH 插件改为校验设备回显，命中 `% Invalid input` / `Unrecognized command` / `Permission denied` 等特征或提示符超时时判失败；深信服插件校验 `applyconfig` 生效结果，接口成功但配置未生效时判失败
 - **插件配置统一校验**：新增 `required_config` 与 `BasePlugin.validate_config()`，`execute()` 与连通性测试前统一校验必填项与 `credential_ref` 注入结果，缺项返回「插件配置错误」而非设备侧报错
 - **连通性测试不再 500**：新增 `BasePlugin.safe_test_connection()`，`POST /plugins/test` 与设备连通性测试遇到的任何异常都收敛为结构化失败结果

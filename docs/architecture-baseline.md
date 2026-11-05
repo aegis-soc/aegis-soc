@@ -45,7 +45,7 @@
 | ORM / DB | **SQLAlchemy 2.0 + MySQL 8** | utf8mb4 | 附录A 的 18 张表 DDL 可直接落地，无需改造 | `GORM + 7 表`：不支持 IPv6/CIDR/Domain 分类与设备能力矩阵 |
 | 缓存 | **Redis 7** | 告警去重、限流、幂等锁、全局熔断开关、Celery broker | 三份材料一致 | — |
 | 前端 | **Vue 3 + Element Plus + Vite** | 管理后台 SPA | 文档与代码骨架一致 | `React`：仅 README 徽章出现 |
-| 插件机制 | **Python 注册式 + Manifest 能力声明** | `plugins/base.py` 抽象 + `registry.py` + 4 个内置插件 | 文档 6.3/6.4 要求声明 `ioc_types` / `capabilities` 与统一接口；注册式规避 Go plugin 跨平台坑，开源项目优先稳定 | 独立进程/容器、签名校验：文档 6.5 要求，但 v1.0 先留接口，v1.1 落地 |
+| 插件机制 | **Python 注册式 + Manifest 能力声明** | `plugins/base.py` 抽象 + `context.py`（设备/请求上下文）+ `registry.py` + 8 个内置插件 | 文档 6.3/6.4 要求声明 `ioc_types` / `capabilities` 与统一接口；注册式规避 Go plugin 跨平台坑，开源项目优先稳定 | 独立进程/容器、签名校验：文档 6.5 要求，但 v1.0 先留接口，v1.1 落地 |
 | 认证授权 | **JWT + RBAC** | `admin / operator / auditor`，接口级依赖注入 | 三份一致；白名单 API 独立业务权限（文档 11.3 硬性约束） | — |
 | 反向代理 | **Nginx** | 前端静态资源 + `/api` 反代 + HTTPS 卸载位 | 文档 14.1 | `gin.Static`：不利于前后端分离与独立扩容 |
 | API 文档 | **FastAPI 自动生成 `/docs`** | OpenAPI 3 | 零额外代码 | `gin-swagger` 需注解维护 |
@@ -99,6 +99,7 @@ aegis-soc/
 │   │   └── services/              # 业务服务层，供 api 与 worker 共用
 │   ├── plugins/
 │   │   ├── base.py                # 统一接口 + Manifest 能力声明（文档 6.3/6.4）
+│   │   ├── context.py             # DeviceTarget / ActionRequest / 三层配置（v1.1 P1）
 │   │   ├── registry.py            # 注册/发现/调用
 │   │   └── builtin/
 │   │       ├── mock.py            # 只记日志不下发

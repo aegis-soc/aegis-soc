@@ -79,7 +79,7 @@ def _plugin(device: FakeDevice, monkeypatch) -> QimingIpsPlugin:
 
 def test_login_sends_sha256_not_plaintext(monkeypatch):
     device = FakeDevice()
-    result = _plugin(device, monkeypatch).block("1.2.3.4", "IP", CONFIG)
+    result = _plugin(device, monkeypatch).execute("BLOCK", "1.2.3.4", "IP", CONFIG)
     assert result.success is True
     assert device.last_password == hashlib.sha256("Passw0rd!".encode()).hexdigest()
     assert device.last_password != "Passw0rd!"
@@ -88,7 +88,7 @@ def test_login_sends_sha256_not_plaintext(monkeypatch):
 
 def test_block_payload_for_ip(monkeypatch):
     device = FakeDevice()
-    result = _plugin(device, monkeypatch).block("1.2.3.4", "IP", CONFIG)
+    result = _plugin(device, monkeypatch).execute("BLOCK", "1.2.3.4", "IP", CONFIG)
     assert result.success is True
     call = [c for c in device.calls if c["url"].endswith("/block_policy")][0]
     assert call["body"] == {
@@ -100,7 +100,7 @@ def test_block_payload_for_ip(monkeypatch):
 
 def test_block_permanent_when_end_time_zero(monkeypatch):
     device = FakeDevice()
-    result = _plugin(device, monkeypatch).block("1.2.3.4", "IP", dict(CONFIG, end_time_minutes=0))
+    result = _plugin(device, monkeypatch).execute("BLOCK", "1.2.3.4", "IP", dict(CONFIG, end_time_minutes=0))
     assert result.success is True
     call = [c for c in device.calls if c["url"].endswith("/block_policy")][0]
     assert call["body"]["end_time"] == 0
@@ -109,7 +109,7 @@ def test_block_permanent_when_end_time_zero(monkeypatch):
 
 def test_domain_maps_to_type_2(monkeypatch):
     device = FakeDevice()
-    result = _plugin(device, monkeypatch).block("evil.example.com", "DOMAIN", CONFIG)
+    result = _plugin(device, monkeypatch).execute("BLOCK", "evil.example.com", "DOMAIN", CONFIG)
     assert result.success is True
     call = [c for c in device.calls if c["url"].endswith("/block_policy")][0]
     assert call["body"]["type"] == 2
@@ -118,7 +118,7 @@ def test_domain_maps_to_type_2(monkeypatch):
 
 def test_explicit_block_type_wins(monkeypatch):
     device = FakeDevice()
-    result = _plugin(device, monkeypatch).block("1.2.3.4", "IP", dict(CONFIG, block_type=5))
+    result = _plugin(device, monkeypatch).execute("BLOCK", "1.2.3.4", "IP", dict(CONFIG, block_type=5))
     assert result.success is True
     call = [c for c in device.calls if c["url"].endswith("/block_policy")][0]
     assert call["body"]["type"] == 5
@@ -128,7 +128,7 @@ def test_business_code_failure_is_reported(monkeypatch):
     device = FakeDevice()
     device.block_code = 10021
     device.block_msg = "策略数量已达上限"
-    result = _plugin(device, monkeypatch).block("1.2.3.4", "IP", CONFIG)
+    result = _plugin(device, monkeypatch).execute("BLOCK", "1.2.3.4", "IP", CONFIG)
     assert result.success is False
     assert "10021" in result.message
     assert "策略数量已达上限" in result.message
@@ -137,7 +137,7 @@ def test_business_code_failure_is_reported(monkeypatch):
 def test_login_failure_surfaces_device_message(monkeypatch):
     device = FakeDevice()
     device.login_code = 10001
-    result = _plugin(device, monkeypatch).block("1.2.3.4", "IP", CONFIG)
+    result = _plugin(device, monkeypatch).execute("BLOCK", "1.2.3.4", "IP", CONFIG)
     assert result.success is False
     assert "登录失败" in result.message
 
@@ -145,8 +145,8 @@ def test_login_failure_surfaces_device_message(monkeypatch):
 def test_token_is_reused_across_blocks(monkeypatch):
     device = FakeDevice()
     plugin = _plugin(device, monkeypatch)
-    plugin.block("1.1.1.1", "IP", CONFIG)
-    plugin.block("2.2.2.2", "IP", CONFIG)
+    plugin.execute("BLOCK", "1.1.1.1", "IP", CONFIG)
+    plugin.execute("BLOCK", "2.2.2.2", "IP", CONFIG)
     assert device.logins == 1
     assert device.blocks == 2
 
@@ -154,7 +154,7 @@ def test_token_is_reused_across_blocks(monkeypatch):
 def test_expired_token_relogin_once(monkeypatch):
     device = FakeDevice()
     device.expire_token_once = True
-    result = _plugin(device, monkeypatch).block("1.2.3.4", "IP", CONFIG)
+    result = _plugin(device, monkeypatch).execute("BLOCK", "1.2.3.4", "IP", CONFIG)
     assert result.success is True
     assert device.logins == 2
     assert device.blocks == 1

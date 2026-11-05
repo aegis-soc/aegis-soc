@@ -9,6 +9,7 @@ import logging
 from typing import Any
 
 from plugins.base import BasePlugin, PluginResult
+from plugins.context import ActionRequest, DeviceTarget
 
 logger = logging.getLogger("aegis")
 
@@ -25,17 +26,24 @@ class MockPlugin(BasePlugin):
     def test_connection(self, config: dict[str, Any]) -> PluginResult:
         return PluginResult(True, "mock 插件连通性正常（无需真实设备）", raw="")
 
-    def _act(self, operation: str, ioc_value: str, ioc_type: str, config: dict[str, Any]) -> PluginResult:
-        record = {"plugin": "mock", "operation": operation, "ioc_type": ioc_type, "ioc_value": ioc_value}
-        if config.get("mode") != "silent":
-            logger.info("[mock] %s %s %s", operation, ioc_type, ioc_value)
+    def _act(self, target: DeviceTarget, req: ActionRequest) -> PluginResult:
+        record = {
+            "plugin": "mock",
+            "device": target.code or target.address,
+            "operation": req.operation,
+            "ioc_type": req.ioc_type,
+            "ioc_value": req.ioc_value,
+        }
+        if target.get("mode") != "silent":
+            logger.info("[mock] %s %s %s on %s", req.operation, req.ioc_type,
+                        req.ioc_value, target.code or "-")
         return PluginResult(True, "mock 已记录任务（未真实下发）", raw=json.dumps(record, ensure_ascii=False))
 
-    def block(self, ioc_value: str, ioc_type: str, config: dict[str, Any]) -> PluginResult:
-        return self._act("BLOCK", ioc_value, ioc_type, config)
+    def block(self, target: DeviceTarget, req: ActionRequest) -> PluginResult:
+        return self._act(target, req)
 
-    def unblock(self, ioc_value: str, ioc_type: str, config: dict[str, Any]) -> PluginResult:
-        return self._act("UNBLOCK", ioc_value, ioc_type, config)
+    def unblock(self, target: DeviceTarget, req: ActionRequest) -> PluginResult:
+        return self._act(target, req)
 
-    def query_status(self, ioc_value: str, ioc_type: str, config: dict[str, Any]) -> PluginResult:
-        return self._act("QUERY", ioc_value, ioc_type, config)
+    def query_status(self, target: DeviceTarget, req: ActionRequest) -> PluginResult:
+        return self._act(target, req)

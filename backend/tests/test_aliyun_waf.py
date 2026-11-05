@@ -83,7 +83,7 @@ def _plugin(fake: FakeWaf) -> AliyunWafV3Plugin:
 def test_block_appends_and_rewrites_full_list():
     fake = FakeWaf()
     fake.add_rule("aegis-block", ["1.1.1.1", "2.2.2.2"])
-    result = _plugin(fake).block("3.3.3.3", "IP", CONFIG)
+    result = _plugin(fake).execute("BLOCK", "3.3.3.3", "IP", CONFIG)
     assert result.success is True
     action, item = fake.writes[-1]
     assert action == "ModifyDefenseRule"
@@ -95,7 +95,7 @@ def test_block_appends_and_rewrites_full_list():
 def test_block_is_idempotent():
     fake = FakeWaf()
     fake.add_rule("aegis-block", ["1.1.1.1"])
-    result = _plugin(fake).block("1.1.1.1", "IP", CONFIG)
+    result = _plugin(fake).execute("BLOCK", "1.1.1.1", "IP", CONFIG)
     assert result.success is True
     assert "已在" in result.message
     assert fake.writes == []
@@ -105,7 +105,7 @@ def test_block_creates_new_shard_when_rule_is_full():
     fake = FakeWaf()
     full = [f"10.0.{i // 250}.{i % 250 + 1}" for i in range(200)]
     fake.add_rule("aegis-block", full)
-    result = _plugin(fake).block("8.8.8.8", "IP", CONFIG)
+    result = _plugin(fake).execute("BLOCK", "8.8.8.8", "IP", CONFIG)
     assert result.success is True
     names = [r["RuleName"] for r in fake.rules]
     assert names == ["aegis-block", "aegis-block-2"]
@@ -118,7 +118,7 @@ def test_max_entries_cannot_exceed_200():
     """配置写 5000 也只能按 200 分片，避免触发 DefenseIpCountOversize。"""
     fake = FakeWaf()
     fake.add_rule("aegis-block", [f"10.1.0.{i}" for i in range(1, 201)])
-    result = _plugin(fake).block("7.7.7.7", "IP", dict(CONFIG, max_entries=5000))
+    result = _plugin(fake).execute("BLOCK", "7.7.7.7", "IP", dict(CONFIG, max_entries=5000))
     assert result.success is True
     assert [r["RuleName"] for r in fake.rules] == ["aegis-block", "aegis-block-2"]
 
@@ -127,7 +127,7 @@ def test_shard_limit_reached():
     fake = FakeWaf()
     fake.add_rule("aegis-block", [f"10.2.0.{i}" for i in range(1, 201)])
     fake.add_rule("aegis-block-2", [f"10.3.0.{i}" for i in range(1, 201)])
-    result = _plugin(fake).block("6.6.6.6", "IP", dict(CONFIG, max_rules=2))
+    result = _plugin(fake).execute("BLOCK", "6.6.6.6", "IP", dict(CONFIG, max_rules=2))
     assert result.success is False
     assert "分片上限" in result.message
     assert fake.writes == []
@@ -136,7 +136,7 @@ def test_shard_limit_reached():
 def test_unblock_removes_only_target_ip():
     fake = FakeWaf()
     fake.add_rule("aegis-block", ["1.1.1.1", "2.2.2.2", "3.3.3.3"])
-    result = _plugin(fake).unblock("2.2.2.2", "IP", CONFIG)
+    result = _plugin(fake).execute("UNBLOCK", "2.2.2.2", "IP", CONFIG)
     assert result.success is True
     action, item = fake.writes[-1]
     assert item["remoteAddr"] == ["1.1.1.1", "3.3.3.3"]
@@ -146,7 +146,7 @@ def test_unblock_removes_only_target_ip():
 def test_unblock_last_ip_disables_rule():
     fake = FakeWaf()
     fake.add_rule("aegis-block", ["9.9.9.9"])
-    result = _plugin(fake).unblock("9.9.9.9", "IP", CONFIG)
+    result = _plugin(fake).execute("UNBLOCK", "9.9.9.9", "IP", CONFIG)
     assert result.success is True
     _, item = fake.writes[-1]
     assert item["remoteAddr"] == []
@@ -156,7 +156,7 @@ def test_unblock_last_ip_disables_rule():
 def test_unblock_missing_ip_is_success_without_write():
     fake = FakeWaf()
     fake.add_rule("aegis-block", ["1.1.1.1"])
-    result = _plugin(fake).unblock("4.4.4.4", "IP", CONFIG)
+    result = _plugin(fake).execute("UNBLOCK", "4.4.4.4", "IP", CONFIG)
     assert result.success is True
     assert fake.writes == []
 
@@ -165,7 +165,7 @@ def test_api_error_is_reported_as_failure():
     fake = FakeWaf()
     fake.add_rule("aegis-block", ["1.1.1.1"])
     fake.fail_with = "Defense.Control.DefenseIpCountOversize: The number of IPs exceeds the limit."
-    result = _plugin(fake).block("5.5.5.5", "IP", CONFIG)
+    result = _plugin(fake).execute("BLOCK", "5.5.5.5", "IP", CONFIG)
     assert result.success is False
     assert "DefenseIpCountOversize" in result.message
 
@@ -211,7 +211,7 @@ def test_signature_parameters(monkeypatch):
 def test_auto_create_rule_false_never_creates_rule():
     """模板下没有规则时，禁止新建，明确要求人工在控制台建。"""
     fake = FakeWaf()
-    result = _plugin(fake).block("1.2.3.4", "IP", dict(CONFIG, auto_create_rule=False))
+    result = _plugin(fake).execute("BLOCK", "1.2.3.4", "IP", dict(CONFIG, auto_create_rule=False))
     assert result.success is False
     assert "auto_create_rule=false" in result.message
     assert "手动创建" in result.message
@@ -221,7 +221,7 @@ def test_auto_create_rule_false_never_creates_rule():
 def test_auto_create_rule_false_still_writes_existing_rule():
     fake = FakeWaf()
     fake.add_rule("aegis-block", ["1.1.1.1"])
-    result = _plugin(fake).block("2.2.2.2", "IP", dict(CONFIG, auto_create_rule=False))
+    result = _plugin(fake).execute("BLOCK", "2.2.2.2", "IP", dict(CONFIG, auto_create_rule=False))
     assert result.success is True
     action, item = fake.writes[-1]
     assert action == "ModifyDefenseRule"

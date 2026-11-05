@@ -22,6 +22,7 @@
 from typing import Any
 import requests
 from plugins.base import BasePlugin, PluginConfigError, PluginResult
+from plugins.context import ActionRequest, DeviceTarget
 
 
 class MyDevicePlugin(BasePlugin):
@@ -56,20 +57,27 @@ class MyDevicePlugin(BasePlugin):
         except Exception as exc:
             return PluginResult(False, str(exc))
 
-    def block(self, ioc_value: str, ioc_type: str, config: dict[str, Any]) -> PluginResult:
+    def block(self, target: DeviceTarget, req: ActionRequest) -> PluginResult:
         r = requests.post(
-            config["base_url"].rstrip("/") + "/blacklist",
-            json={"ip": ioc_value}, headers=self._headers(config), timeout=self.default_timeout,
+            target.connection["base_url"].rstrip("/") + "/blacklist",
+            json={"ip": req.ioc_value}, headers=self._headers(target.config),
+            timeout=target.limits.timeout,
         )
         return PluginResult(r.ok, f"HTTP {r.status_code}", raw=r.text[:1000], http_status=r.status_code)
 
-    def unblock(self, ioc_value: str, ioc_type: str, config: dict[str, Any]) -> PluginResult:
+    def unblock(self, target: DeviceTarget, req: ActionRequest) -> PluginResult:
         r = requests.delete(
-            config["base_url"].rstrip("/") + "/blacklist/" + ioc_value,
-            headers=self._headers(config), timeout=self.default_timeout,
+            target.connection["base_url"].rstrip("/") + "/blacklist/" + req.ioc_value,
+            headers=self._headers(target.config), timeout=target.limits.timeout,
         )
         return PluginResult(r.ok, f"HTTP {r.status_code}", raw=r.text[:1000], http_status=r.status_code)
 ```
+
+> **v1.1 起插件方法的入参是「设备 + 请求」**：`block(target, req)` / `unblock(target, req)` /
+> `query_status(target, req)`。`target` 是这台具体设备，`req` 是这次动作。
+> 通过 `target.connection`（地址/端口/TLS）、`target.params`（业务参数）、`target.secrets`（凭据）
+> 分层取配置；`target.config` 提供合并后的扁平视图，便于复用旧代码。
+> `target.code` / `target.address` 可直接写进日志与回执，排查时能定位到具体设备。
 
 ### 步骤 2：注册
 
@@ -95,7 +103,14 @@ register(MyDevicePlugin)
 
 在「设备管理」新增设备，选择 `my_device`：
 
-- **插件配置(JSON)**：`{"base_url": "https://device.example.internal", "timeout": 10}`
+- **插件配置(JSON)**：推荐按层写，`connection` 只放地址类字段，`params` 放业务参数
+  ```json
+  {"connection": {"base_url": "https://device.example.internal", "timeout": 10},
+   "params": {"tag_name": "aegis-block"}}
+  ```
+  旧写法（扁平）仍然可用：`{"base_url": "...", "timeout": 10}`——平台按字段名自动拆层；
+  `base_url` / `host` / `endpoint` / `port` / `verify_ssl` / `timeout` / `region_id` 归 `connection`，
+  口令与密钥类字段归 `secrets`，其余归 `params`。
 - **凭据环境变量**：`MY_DEVICE_CRED`
 
 宿主机环境变量（写入 `.env`，**不要提交仓库**）：
@@ -104,7 +119,12 @@ register(MyDevicePlugin)
 MY_DEVICE_CRED='{"api_key":"your-real-key"}'
 ```
 
-`resolve_device_config()` 会把该 JSON 合并进插件配置，插件里通过 `config["api_key"]` 读取。
+`resolve_device_config()` 会把该 JSON 合并进扁平配置，`DeviceTarget.from_flat()` 再按上述规则拆层；
+插件里既可 `target.get("api_key")`，也可继续用 `target.config["api_key"]`。
+
+> 一台设备 = 插件类型的一个实例。`paloalto_fw` 可以对应 10 台 PA，`ssh_firewall` 可以同时挂华为和华三，
+> 它们各自有独立的地址、参数与凭据；策略派发时一个 IOC 会按设备逐台生成任务。
+> 执行链路：`DeviceTarget(设备) + ActionRequest(IOC/动作)` → `registry.execute(target, req)` → 插件方法。
 
 ### 步骤 5：测试与验收
 

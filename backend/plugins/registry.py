@@ -8,6 +8,7 @@ import logging
 from typing import Any
 
 from plugins.base import VALID_OPERATIONS, BasePlugin, PluginResult
+from plugins.context import DeviceTarget
 
 logger = logging.getLogger("aegis")
 _plugins: dict[str, BasePlugin] = {}
@@ -89,16 +90,26 @@ def test_plugin(code: str, config: dict[str, Any]) -> dict[str, Any]:
     return plugin.safe_test_connection(config or {}).to_dict()
 
 
-def execute(
-    code: str,
-    operation: str,
-    ioc_value: str,
-    ioc_type: str,
-    config: dict[str, Any],
-) -> PluginResult:
+def execute(target: Any, *args: Any) -> PluginResult:
+    """按设备执行插件。
+
+    推荐：``execute(DeviceTarget, ActionRequest)`` —— 设备、IOC、动作显式传递；
+    兼容：``execute(code, operation, ioc_value, ioc_type, config)`` 的旧签名。
+    """
+    if isinstance(target, DeviceTarget):
+        plugin = get(target.plugin_code)
+        if plugin is None:
+            return PluginResult(False, f"插件未注册: {target.plugin_code}")
+        req = args[0] if args else None
+        return plugin.execute(target, req)
+    code = str(target)
     plugin = get(code)
     if plugin is None:
         return PluginResult(False, f"插件未注册: {code}")
+    if len(args) < 3:
+        return PluginResult(False, "execute 参数不完整：需要 operation / ioc_value / ioc_type")
+    operation, ioc_value, ioc_type = args[0], args[1], args[2]
+    config = args[3] if len(args) > 3 else {}
     return plugin.execute(operation, ioc_value, ioc_type, config or {})
 
 

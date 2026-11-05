@@ -13,6 +13,7 @@ from typing import Any
 import paramiko
 
 from plugins.base import BasePlugin, PluginConfigError, PluginResult, as_int
+from plugins.context import ActionRequest, DeviceTarget
 
 # 设备 CLI 拒绝执行时常见的回显特征（小写匹配）
 ERROR_MARKERS = (
@@ -163,8 +164,8 @@ class SshFirewallPlugin(BasePlugin):
         verb = "封禁" if operation == "BLOCK" else "解封"
         return PluginResult(True, f"{verb}命令已下发且设备回显正常", raw=output[:4000])
 
-    def block(self, ioc_value: str, ioc_type: str, config: dict[str, Any]) -> PluginResult:
-        return self._run("BLOCK", ioc_value, config)
+    def block(self, target: DeviceTarget, req: ActionRequest) -> PluginResult:
+        return self._run("BLOCK", req.ioc_value, target.config)
 
-    def unblock(self, ioc_value: str, ioc_type: str, config: dict[str, Any]) -> PluginResult:
-        return self._run("UNBLOCK", ioc_value, config)
+    def unblock(self, target: DeviceTarget, req: ActionRequest) -> PluginResult:
+        return self._run("UNBLOCK", req.ioc_value, target.config)

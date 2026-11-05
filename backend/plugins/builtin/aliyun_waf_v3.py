@@ -31,6 +31,7 @@ import requests
 import urllib3
 
 from plugins.base import BasePlugin, PluginConfigError, PluginResult, as_bool, as_int
+from plugins.context import ActionRequest, DeviceTarget
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -368,8 +369,8 @@ class AliyunWafV3Plugin(BasePlugin):
             ),
         )
 
-    def block(self, ioc_value: str, ioc_type: str, config: dict[str, Any]) -> PluginResult:
-        return self._act("BLOCK", ioc_value, config)
+    def block(self, target: DeviceTarget, req: ActionRequest) -> PluginResult:
+        return self._act("BLOCK", req.ioc_value, target.config)
 
-    def unblock(self, ioc_value: str, ioc_type: str, config: dict[str, Any]) -> PluginResult:
-        return self._act("UNBLOCK", ioc_value, config)
+    def unblock(self, target: DeviceTarget, req: ActionRequest) -> PluginResult:
+        return self._act("UNBLOCK", req.ioc_value, target.config)

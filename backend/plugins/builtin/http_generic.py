@@ -13,6 +13,7 @@ from typing import Any
 import requests
 
 from plugins.base import BasePlugin, PluginConfigError, PluginResult, as_bool, as_int
+from plugins.context import ActionRequest, DeviceTarget
 
 
 class HttpGenericPlugin(BasePlugin):
@@ -89,11 +90,11 @@ class HttpGenericPlugin(BasePlugin):
         except requests.RequestException as exc:
             return PluginResult(False, f"连通性测试失败: {exc}", raw=str(exc))
 
-    def block(self, ioc_value: str, ioc_type: str, config: dict[str, Any]) -> PluginResult:
-        return self._request("BLOCK", ioc_value, ioc_type, config)
+    def block(self, target: DeviceTarget, req: ActionRequest) -> PluginResult:
+        return self._request("BLOCK", req.ioc_value, req.ioc_type, target.config)
 
-    def unblock(self, ioc_value: str, ioc_type: str, config: dict[str, Any]) -> PluginResult:
-        return self._request("UNBLOCK", ioc_value, ioc_type, config)
+    def unblock(self, target: DeviceTarget, req: ActionRequest) -> PluginResult:
+        return self._request("UNBLOCK", req.ioc_value, req.ioc_type, target.config)
 
-    def query_status(self, ioc_value: str, ioc_type: str, config: dict[str, Any]) -> PluginResult:
-        return self._request("QUERY", ioc_value, ioc_type, config)
+    def query_status(self, target: DeviceTarget, req: ActionRequest) -> PluginResult:
+        return self._request("QUERY", req.ioc_value, req.ioc_type, target.config)
