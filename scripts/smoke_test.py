@@ -31,6 +31,11 @@ import urllib.request
 PROBE_IP = "93.184.216.34"
 # 内置种子白名单里的示例地址（bootstrap / seed.sql 写入）
 WHITELISTED_IP = "198.51.100.10"
+# v1.0 内置插件清单：冒烟时校验是否全部注册成功（新增插件请同步这里）
+EXPECTED_PLUGINS = {
+    "mock", "http_generic", "ssh_firewall", "sangfor_ips",
+    "paloalto_fw", "qiming_fw", "qiming_ips", "aliyun_waf_v3",
+}
 
 RESULTS: list[tuple[str, bool, str]] = []
 
@@ -186,8 +191,17 @@ def main() -> int:
     tasks = items_of(data)
     step("生成了设备任务", len(tasks) >= 1, f"{len(tasks)} 条")
     if tasks:
-        statuses = [t.get("task_status") for t in tasks]
-        step("任务执行成功（mock 插件）", all(s == "SUCCESS" for s in statuses), f"状态={statuses}")
+        mock_tasks = [t for t in tasks if t.get("plugin_code") == "mock"]
+        statuses = [t.get("task_status") for t in mock_tasks]
+        others = [
+            f"{t.get('plugin_code')}={t.get('task_status')}"
+            for t in tasks if t.get("plugin_code") != "mock"
+        ]
+        note = f"mock={statuses}"
+        if others:
+            note += f"，其他设备={others}（未配真实设备时失败属预期）"
+        step("任务执行成功（mock 插件）",
+             bool(mock_tasks) and all(s == "SUCCESS" for s in statuses), note)
         tid = tasks[0]["id"]
         code, detail = http("GET", f"{base}/api/v1/tasks/{tid}", token=token, timeout=args.timeout)
         logs = payload_of(detail).get("logs") or []
@@ -214,7 +228,11 @@ def main() -> int:
     print("[9/9] 插件、审计与大盘", flush=True)
     code, data = http("GET", f"{base}/api/v1/plugins", token=token, timeout=args.timeout)
     plugins = items_of(data)
-    step("内置插件 4 个", len(plugins) == 4, f"{[p.get('plugin_code') for p in plugins]}")
+    codes = {p.get("plugin_code") for p in plugins}
+    missing = EXPECTED_PLUGINS - codes
+    step(f"内置插件齐备（{len(EXPECTED_PLUGINS)} 个）",
+         not missing,
+         f"共 {len(plugins)} 个" + (f"，缺少 {sorted(missing)}" if missing else ""))
 
     code, data = http("GET", f"{base}/api/v1/audit", token=token, timeout=args.timeout)
     total = payload_of(data).get("total")
