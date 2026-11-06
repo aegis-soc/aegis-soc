@@ -46,7 +46,6 @@ export const api = {
   addIocIp: (data) => http.post('/ioc/ips', data),
   updateIocIp: (id, data) => http.put(`/ioc/ips/${id}`, data),
   deleteIocIp: (id) => http.delete(`/ioc/ips/${id}`),
-  iocGeoCountries: () => http.get('/ioc/geo/countries'),
   iocDomains: (params) => http.get('/ioc/domains', { params }),
   iocDomain: (id) => http.get(`/ioc/domains/${id}`),
   addIocDomain: (data) => http.post('/ioc/domains', data),

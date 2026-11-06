@@ -60,8 +60,11 @@ python scripts/fetch_geoip.py --path D:/geoip/ip2region_v4.xdb
 
 ## 4. 什么时候查、存在哪
 
-归属地在**写入黑名单时查一次并落库**（`ioc_indicator.geo_country/geo_province/geo_city/geo_isp`），
-理由：
+归属地在记录**入库后由后台线程异步查一次并落库**（`ioc_indicator.geo_country/geo_province/geo_city/geo_isp`），
+**为什么异步**：告警处置链路（解析 → 校验 → 生成封禁任务 → 下发）不等 geo 查询——
+入库接口先把记录落库并返回，`geoip.schedule_fill()` 把待回填的记录 ID 交给后台线程
+（同批去重、异常只记日志），通常亚秒级完成。失败也不丢数据：
+`scripts/backfill_geo.py --all` 随时可兜底补齐。其余理由：
 
 1. 库每月更新，历史记录应保留当时的归属，便于复盘；
 2. 列表接口不依赖库文件，库没下载/被删时旧记录照样能看；
@@ -85,7 +88,7 @@ python ../scripts/backfill_geo.py --dry-run  # 只统计
 ## 5. 界面与接口
 
 - 列表新增「国家」「地区」两列，地区列悬浮显示运营商；`中国` 用红色标签、境外用灰色。
-- 顶部新增「国家/地区」下拉（带记录数），数据来自 `GET /api/v1/ioc/geo/countries`。
+- 顶部新增「国家/地区」下拉（内置常用国家，支持输入任意国家名过滤），**不需要独立的归属地接口**——筛选直接复用列表接口的 `country` 参数。
 - 关键字搜索已覆盖国家/省/市，直接搜「深圳」「美国」即可。
 - `GET /api/v1/ioc/ips?country=中国` 精确筛选。
 - `GET /api/healthz` 的 `geoip` 字段可判断库是否就绪：`{"enabled": true, "db_exists": true}`。

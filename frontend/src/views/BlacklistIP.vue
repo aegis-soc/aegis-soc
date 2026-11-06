@@ -11,8 +11,8 @@
       <el-select v-model="query.source_type" placeholder="来源" clearable style="width: 130px">
         <el-option v-for="s in SOURCE_OPTIONS" :key="s.value" :label="s.label" :value="s.value" />
       </el-select>
-      <el-select v-model="query.country" placeholder="国家/地区" clearable filterable style="width: 150px">
-        <el-option v-for="c in countries" :key="c.country" :label="`${c.country} (${c.count})`" :value="c.country" />
+      <el-select v-model="query.country" placeholder="国家/地区" clearable filterable allow-create default-first-option style="width: 150px">
+        <el-option v-for="c in COUNTRY_OPTIONS" :key="c" :label="c" :value="c" />
       </el-select>
       <el-input v-model="query.keyword" placeholder="IP / 归属地 / 设备名 / 告警ID" clearable style="width: 240px" @keyup.enter="load" />
       <el-button type="primary" @click="load">查询</el-button>
@@ -94,7 +94,6 @@ const rows = ref([])
 const total = ref(0)
 const loading = ref(false)
 const dialog = ref(false)
-const countries = ref([])
 const query = reactive({ page: 1, page_size: 20, status: '', source_type: '', country: '', keyword: '' })
 const form = reactive({ ioc_value: '', confidence: 80, risk_level: 'high', duration_seconds: 7200, remark: '', dispatch: true })
 
@@ -144,12 +143,13 @@ function geoTitle(row) {
   return parts.join(' · ')
 }
 
-async function loadCountries() {
-  try {
-    const data = await api.iocGeoCountries()
-    countries.value = data.items || []
-  } catch (e) { countries.value = [] }
-}
+// 内置常用国家选项（可输入任意国家名过滤）；归属地不需要独立接口，
+// 由列表数据 + 离线库直接支撑
+const COUNTRY_OPTIONS = [
+  '内网', '保留地址', '中国', '中国香港', '中国澳门', '中国台湾',
+  '美国', '俄罗斯', '日本', '韩国', '印度', '越南', '新加坡',
+  '德国', '法国', '英国', '荷兰', '巴西', '加拿大', '澳大利亚', '印度尼西亚',
+]
 
 async function load() {
   loading.value = true
@@ -168,7 +168,6 @@ async function submit() {
     dialog.value = false
     form.ioc_value = ''
     load()
-    loadCountries()
   } catch (e) { /* 拦截器已提示 */ }
 }
 async function remove(row) {
@@ -178,5 +177,5 @@ async function remove(row) {
     load()
   } catch (e) { /* 拦截器已提示 */ }
 }
-onMounted(() => { load(); loadCountries() })
+onMounted(load)
 </script>

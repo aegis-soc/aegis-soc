@@ -151,7 +151,6 @@ def create_ioc_record(
         reject_reason=reject_reason,
         source_count=1,
         created_by=created_by,
-        **(geoip.geo_fields(validation.normalized) if ioc_type == "IP" else {}),
     )
     db.add(row)
     db.flush()
@@ -246,7 +245,6 @@ def record_rejected_ioc(
         reject_reason=reason[:255],
         source_count=1,
         created_by=created_by,
-        **(geoip.geo_fields(normalized) if ioc_type == "IP" else {}),
     )
     db.add(row)
     db.flush()
@@ -421,6 +419,12 @@ def process_alert(
     valid: list[tuple[dict[str, Any], Any]] = []
     whitelist_hits: list[str] = []
     rejected_count = 0
+    geo_pending: list[int] = []  # 待异步回填归属地的记录 ID
+
+    def flush_geo() -> None:
+        """提交后把归属地查询交给后台线程，主流程不等它。"""
+        if geo_pending:
+            geoip.schedule_fill(geo_pending)
     for candidate in candidates:
         ioc_type = str(candidate.get("ioc_type", "IP")).upper()
         value = str(candidate.get("value", ""))
@@ -437,7 +441,7 @@ def process_alert(
                     content={"matched": matched, "alert_id": parsed.alert_id, "action": "豁免封禁"},
                     client_ip=client_ip,
                 )
-                record_rejected_ioc(
+                rejected = record_rejected_ioc(
                     db, ioc_type=ioc_type, value=value, status="whitelisted",
                     reason=f"命中白名单 {matched}，豁免封禁",
                     alert_id=parsed.alert_id,
@@ -445,6 +449,8 @@ def process_alert(
                     confidence=parsed.confidence, risk_level=parsed.risk_level,
                 )
                 rejected_count += 1
+                if rejected is not None and ioc_type == "IP":
+                    geo_pending.append(rejected.id)
                 continue
         check = validate_ioc(ioc_type, value)
         if not check.ok:
@@ -452,13 +458,15 @@ def process_alert(
                 db, "IOC_REJECTED", target_type=ioc_type, target_id=value,
                 content={"reason": check.message, "alert_id": parsed.alert_id}, client_ip=client_ip,
             )
-            record_rejected_ioc(
+            rejected = record_rejected_ioc(
                 db, ioc_type=ioc_type, value=value, status="rejected",
                 reason=check.message, alert_id=parsed.alert_id,
                 source_type=parsed.source_type, source_detail=parsed.source_detail,
                 confidence=parsed.confidence, risk_level=parsed.risk_level,
             )
             rejected_count += 1
+            if rejected is not None and ioc_type == "IP":
+                geo_pending.append(rejected.id)
             continue
         valid.append((candidate, check))
 
@@ -471,6 +479,7 @@ def process_alert(
             client_ip=client_ip,
         )
         db.commit()
+        flush_geo()
         return {
             "status": "accepted", "alert_id": parsed.alert_id, "duplicated": False,
             "ioc_count": 0, "task_count": 0, "rejected_count": rejected_count,
@@ -483,6 +492,7 @@ def process_alert(
         alert.status = "ignored"
         alert.process_msg = "未命中任何启用策略"
         db.commit()
+        flush_geo()
         return {
             "status": "accepted", "alert_id": parsed.alert_id, "duplicated": False,
             "ioc_count": 0, "task_count": 0, "message": "未命中启用策略",
@@ -491,6 +501,7 @@ def process_alert(
         alert.status = "pending"
         alert.process_msg = f"未达到阈值 {policy.threshold_count} 次/{policy.window_minutes} 分钟"
         db.commit()
+        flush_geo()
         return {
             "status": "accepted", "alert_id": parsed.alert_id, "duplicated": False,
             "ioc_count": 0, "task_count": 0, "message": alert.process_msg,
@@ -522,6 +533,8 @@ def process_alert(
             alert_id=parsed.alert_id,
         )
         ioc_count += 1
+        if ioc_type == "IP":
+            geo_pending.append(ioc.id)
         devices = match_devices(db, ioc_type, "BLOCK", target_plugins)
         for device in devices:
             task = create_task(
@@ -548,6 +561,7 @@ def process_alert(
         client_ip=client_ip,
     )
     db.commit()
+    flush_geo()
 
     dispatch_tasks(task_ids)
     return {

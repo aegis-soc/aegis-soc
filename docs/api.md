@@ -126,11 +126,10 @@ RBAC 角色：
 | `geo_isp` | 运营商（如 `电信`、`Google LLC`），库中无则为 `null` |
 | `geo_region` | `geo_province` 与 `geo_city` 合成的展示字段（直辖市去重） |
 
-> 归属地为**写入时快照**，来自 ip2region 离线库；库未安装时该组字段为 `null`，
-> 不影响入库与封禁。详见 `docs/geoip.md`。
-
-`GET /ioc/geo/countries` 返回归属国家下拉选项（按记录数倒序，最多 50 个）：
-`{"items": [{"country": "美国", "count": 3}, ...]}`。
+> 归属地来自 ip2region 离线库，**入库后由后台线程异步回填**（通常亚秒级完成），
+> 记录创建接口会立即返回，不等 geo 查询；库未安装时该组字段保持 `null`，
+> 不影响入库与封禁。**没有独立的归属地查询接口**——列表接口的 
+> `country` 参数与 `keyword`（覆盖国家/省/市）即可满足筛选。详见 `docs/geoip.md`。
 
 > 黑名单是**流水表，同值不合并**：同一 IP 多次命中会生成多条记录，
 > 各自带添加时间与过期时间。规则细节见 `docs/blacklist-history.md`。

@@ -6,6 +6,9 @@
 
 ### Added
 
+- **归属地异步回填，不阻塞入库**：告警处置与手工新增不再同步查 geo——记录先落库并返回，`geoip.schedule_fill()` 把 ID 交给后台线程补齐（同批去重、异常只记日志），`scripts/backfill_geo.py` 可随时兜底
+- **取消独立归属地接口**：移除 `GET /ioc/geo/countries`，国家筛选复用 `GET /ioc/ips?country=`；前端国家下拉改为内置常用列表（可输入任意国家名过滤）
+- **README 界面预览**：新增「界面预览」章节，展示首页大盘、IP 黑名单（流水/来源/归属地）、设备可视化配置表单、插件管理四张截图（`docs/screenshots/`）
 - **IP 归属地（国家 / 省·市）**：黑名单新增「国家」「地区」两列，数据来自 ip2region 离线库（`backend/data/ip2region_v4.xdb`，约 11 MB），国内城市级中文、境外 ISO 码映射中文国名；内网地址直接标「内网」，RFC5737 保留段标「保留地址」
 - **归属地快照落库**：`ioc_indicator` 新增 `geo_country` / `geo_province` / `geo_city` / `geo_isp`，写入时查一次并固化，库更新不改写历史记录；老记录由 `scripts/backfill_geo.py` 幂等回填
 - **归属地运维工具**：`scripts/fetch_geoip.py` 多镜像下载 xdb（jsdelivr / ghfast / GitHub，直连与代理都试，校验文件头与体积后才替换）；服务按 mtime 热加载，换库不重启

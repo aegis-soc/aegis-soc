@@ -20,12 +20,29 @@ from app.main import app
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
     if hasattr(cache._backend, "_data"):
         cache._backend._data.clear()
     cache.set_kill_switch(False)
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+
+    # 内存 SQLite 走 StaticPool 单连接：后台线程并发使用同一连接会互相踩，
+    # 因此测试环境把归属地回填改为同步执行（生产 MySQL / 文件库仍是真异步）。
+    if ":memory:" in settings.database_url:
+        from app.database import SessionLocal
+        from app.services import geoip
+
+        def _sync_fill(ioc_ids):
+            ids = [i for i in (ioc_ids or []) if i]
+            if not ids:
+                return
+            with SessionLocal() as db:
+                if geoip.fill_geo_sync(db, ids):
+                    db.commit()
+
+        monkeypatch.setattr(geoip, "schedule_fill", _sync_fill)
+
     with TestClient(app) as test_client:
         yield test_client
 

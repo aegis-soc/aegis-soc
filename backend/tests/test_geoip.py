@@ -94,11 +94,13 @@ def test_invalid_ip_and_ipv6_return_none():
 # ---------------------------------------------------------------- 写入与查询
 
 def test_alert_writes_geo_snapshot(client, auth_headers, monkeypatch):
+    """归属地在后台线程异步回填：入库不等 geo 查询，但结果一致。"""
     monkeypatch.setattr(
         geoip, "lookup",
         lambda value: GeoInfo(country="中国", province="广东省", city="深圳市", isp="电信", iso_code="CN"),
     )
     _post(client, "evt-geo1", "45.9.9.1")
+    assert geoip.wait_pending()
 
     rows = [r for r in _rows(client, auth_headers) if r["normalized_value"] == "45.9.9.1"]
     assert len(rows) == 1
@@ -114,6 +116,7 @@ def test_rejected_ip_also_gets_geo(client, auth_headers, monkeypatch):
         lambda value: GeoInfo(country="中国", province="北京市", city="北京市", iso_code="CN"),
     )
     _post(client, "evt-geo2", "10.30.40.50")
+    assert geoip.wait_pending()
 
     rows = [
         r for r in _rows(client, auth_headers, status="rejected")
@@ -126,6 +129,7 @@ def test_geo_snapshot_is_frozen_at_write_time(client, auth_headers, monkeypatch)
     """库更新后不应该改写历史记录：写入后换 lookup 结果，旧行保持原值。"""
     monkeypatch.setattr(geoip, "lookup", lambda value: GeoInfo(country="美国", province="California"))
     _post(client, "evt-geo3", "45.9.9.3")
+    assert geoip.wait_pending()
 
     monkeypatch.setattr(geoip, "lookup", lambda value: GeoInfo(country="加拿大", province="Ontario"))
     rows = [r for r in _rows(client, auth_headers) if r["normalized_value"] == "45.9.9.3"]
@@ -140,6 +144,7 @@ def test_filter_by_country_and_keyword(client, auth_headers, monkeypatch):
     monkeypatch.setattr(geoip, "lookup", lambda value: mapping.get(value))
     _post(client, "evt-geo-cn", "45.9.9.11")
     _post(client, "evt-geo-us", "45.9.9.12")
+    assert geoip.wait_pending()
 
     cn = _rows(client, auth_headers, country="中国")
     assert [r["normalized_value"] for r in cn] == ["45.9.9.11"]
@@ -148,8 +153,19 @@ def test_filter_by_country_and_keyword(client, auth_headers, monkeypatch):
     assert [r["normalized_value"] for r in _rows(client, auth_headers, keyword="深圳")] == ["45.9.9.11"]
     assert [r["normalized_value"] for r in _rows(client, auth_headers, keyword="美国")] == ["45.9.9.12"]
 
-    countries = client.get("/api/v1/ioc/geo/countries", headers=auth_headers).json()["data"]["items"]
-    assert {c["country"] for c in countries} == {"中国", "美国"}
+
+def test_geo_fill_skips_existing_snapshot(client, auth_headers, monkeypatch):
+    """回填只补空值：已有快照的记录不能被库更新覆盖。"""
+    monkeypatch.setattr(geoip, "lookup", lambda value: GeoInfo(country="美国"))
+    _post(client, "evt-geo4", "45.9.9.4")
+    assert geoip.wait_pending()
+
+    monkeypatch.setattr(geoip, "lookup", lambda value: GeoInfo(country="俄罗斯"))
+    from app.database import engine
+    from sqlalchemy.orm import Session
+    with Session(bind=engine) as db:
+        changed = geoip.fill_geo_sync(db, [r["id"] for r in _rows(client, auth_headers)])
+        assert changed == 0  # 全部已有归属地，一个都不覆盖
 
 
 def test_geo_region_in_schema():
@@ -163,7 +179,7 @@ def test_geo_region_in_schema():
 
 
 def test_manual_create_backfills_geo_on_existing_row(client, auth_headers, monkeypatch):
-    """功能上线前写的记录没有归属地，手工再次添加时应补上。"""
+    """功能上线前写的记录没有归属地，手工再次添加时应异步补上。"""
     monkeypatch.setattr(geoip, "lookup", lambda value: None)
     body = {"ioc_value": "45.9.9.21", "confidence": 80, "risk_level": "high", "dispatch": False}
     assert client.post("/api/v1/ioc/ips", json=body, headers=auth_headers).status_code == 200
@@ -173,6 +189,7 @@ def test_manual_create_backfills_geo_on_existing_row(client, auth_headers, monke
         lambda value: GeoInfo(country="中国", province="浙江省", city="杭州市", iso_code="CN"),
     )
     assert client.post("/api/v1/ioc/ips", json=body, headers=auth_headers).status_code == 200
+    assert geoip.wait_pending()
 
     rows = [r for r in _rows(client, auth_headers) if r["normalized_value"] == "45.9.9.21"]
     assert len(rows) == 1

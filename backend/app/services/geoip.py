@@ -270,6 +270,81 @@ def geo_fields(value: str | None) -> dict[str, str | None]:
     }
 
 
+# ---------------------------------------------------------------- 异步回填
+
+_pending_lock = threading.Lock()
+_pending: set[int] = set()
+
+
+def fill_geo_sync(db, ioc_ids: list[int]) -> int:
+    """在给定会话上同步回填指定记录的归属地（供测试与 backfill 脚本复用）。
+
+    只补空值：已有归属地的记录不覆盖——快照一旦写入就是历史事实。
+    """
+    from app.models import IocIndicator
+
+    if not ioc_ids:
+        return 0
+    rows = db.query(IocIndicator).filter(IocIndicator.id.in_(list(ioc_ids))).all()
+    changed = 0
+    for row in rows:
+        if row.ioc_type != "IP" or row.geo_country:
+            continue
+        for key, value in geo_fields(row.normalized_value).items():
+            setattr(row, key, value)
+        changed += 1
+    return changed
+
+
+def schedule_fill(ioc_ids) -> None:
+    """入库后异步回填归属地：主流程只登记 ID，查询在后台线程完成。
+
+    - **绝不阻塞入库**：告警处置（生成封禁任务）不等归属地查询；
+    - 同一批 ID 去重，高频告警下不会堆积线程；
+    - 后台线程任何异常只记日志，可用 scripts/backfill_geo.py --all 兜底补齐。
+    """
+    if not is_enabled():
+        return
+    try:
+        ids = [int(i) for i in (ioc_ids or []) if i]
+    except (TypeError, ValueError):
+        return
+    if not ids:
+        return
+
+    with _pending_lock:
+        fresh = [i for i in ids if i not in _pending]
+        _pending.update(fresh)
+    if not fresh:
+        return
+
+    def _worker() -> None:
+        try:
+            from app.database import SessionLocal
+
+            with SessionLocal() as db:
+                if fill_geo_sync(db, fresh):
+                    db.commit()
+        except Exception as exc:  # noqa: BLE001 - 回填失败不影响主流程
+            logger.warning("异步回填归属地失败（可用 scripts/backfill_geo.py 兜底）：%s", exc)
+        finally:
+            with _pending_lock:
+                _pending.difference_update(fresh)
+
+    threading.Thread(target=_worker, name="aegis-geoip-fill", daemon=True).start()
+
+
+def wait_pending(timeout: float = 5.0) -> bool:
+    """等待全部异步回填完成（测试用）。"""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with _pending_lock:
+            if not _pending:
+                return True
+        time.sleep(0.02)
+    return False
+
+
 def health() -> dict[str, object]:
     """用于 /api/healthz 之外的自检接口或排查脚本。"""
     path = db_path()

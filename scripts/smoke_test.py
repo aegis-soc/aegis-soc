@@ -192,9 +192,23 @@ def main() -> int:
          ))
 
     # 归属地：依赖 backend/data/ip2region_v4.xdb（由 scripts/fetch_geoip.py 下载）
+    # 归属地由后台线程异步回填，这里轮询等它落地（最多 5 秒）
+    def wait_geo(ip, pred, seconds=5.0):
+        deadline = time.monotonic() + seconds
+        rows = []
+        while time.monotonic() < deadline:
+            code, data = http("GET", f"{base}/api/v1/ioc/ips?keyword={ip}",
+                              token=token, timeout=args.timeout)
+            rows = [i for i in items_of(data) if i.get("normalized_value") == ip]
+            if rows and all(pred(i) for i in rows):
+                return rows
+            time.sleep(0.3)
+        return rows
+
     _, health = http("GET", f"{base}/api/healthz", timeout=args.timeout)
     geo_ready = bool(((health or {}).get("data") or {}).get("geoip", {}).get("db_exists"))
     if geo_ready:
+        matched = wait_geo(PROBE_IP, lambda i: i.get("geo_country") and i.get("geo_region"))
         step("记录带归属国家/地区",
              bool(matched) and all(i.get("geo_country") and i.get("geo_region") for i in matched),
              "{} · {} · {}".format(
@@ -226,6 +240,7 @@ def main() -> int:
     step("内网地址被拦截并留痕", bool(rejected),
          rejected[0].get("reject_reason", "") if rejected else "未找到 rejected 记录")
     if geo_ready:
+        rejected = wait_geo(private_ip, lambda i: i.get("geo_country"), seconds=3.0)
         step("内网地址归属地标记为内网",
              bool(rejected) and rejected[0].get("geo_country") == "内网",
              rejected[0].get("geo_country") if rejected else "-")

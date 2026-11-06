@@ -10,7 +10,7 @@ import uuid
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.common import BizError, client_ip, ok, paginate
@@ -136,10 +136,8 @@ def _create_ioc(
             )
     row.status = "active"
     row.reject_reason = None
-    # 归属地快照：新建时写入；老记录（本功能上线前创建的）缺归属地时顺手补上
-    if ioc_type == "IP" and not row.geo_country:
-        for key, value in geoip.geo_fields(check.normalized).items():
-            setattr(row, key, value)
+    # 归属地异步回填：入库与下发不等 geo 查询（见 app/services/geoip.schedule_fill）
+    geo_pending: list[int] = [row.id] if ioc_type == "IP" else []
     row.confidence = body.confidence if body.confidence is not None else row.confidence
     row.risk_level = body.risk_level or row.risk_level
     row.expire_at = expire_at or row.expire_at
@@ -162,6 +160,8 @@ def _create_ioc(
         )
     else:
         db.commit()
+    # 两种分支的提交都已完成，归属地回填交给后台线程
+    geoip.schedule_fill(geo_pending)
     return ok({
         "item": IocOut.model_validate(row).model_dump(mode="json"),
         "created": created,
@@ -256,23 +256,6 @@ def list_ip_ioc(
     _=Depends(require_perms("ioc:read")),
 ):
     return _list_ioc("IP", db, page, page_size, status, keyword, source_type, country)
-
-
-@router.get("/ioc/geo/countries")
-def list_geo_countries(
-    db: Session = Depends(get_db),
-    _=Depends(require_perms("ioc:read")),
-):
-    """归属国家下拉选项：只取有数据的国家，按记录数倒序，附带计数。"""
-    rows = (
-        db.query(IocIndicator.geo_country, func.count(IocIndicator.id))
-        .filter(IocIndicator.ioc_type == "IP", IocIndicator.geo_country.isnot(None))
-        .group_by(IocIndicator.geo_country)
-        .order_by(func.count(IocIndicator.id).desc())
-        .limit(50)
-        .all()
-    )
-    return ok({"items": [{"country": c, "count": n} for c, n in rows]})
 
 
 @router.post("/ioc/ips")
