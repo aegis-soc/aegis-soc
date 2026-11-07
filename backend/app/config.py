@@ -47,6 +47,10 @@ class Settings:
     # IP 归属地（ip2region 离线库）：关闭或库文件缺失时归属地留空，不影响封禁
     geoip_enabled: bool
     geoip_db_path: str
+    # 可选：OpenAI 兼容 LLM 接口，用于生成巡检总结；不配置则用内置规则总结
+    ai_llm_base_url: str
+    ai_llm_api_key: str
+    ai_llm_model: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -77,6 +81,9 @@ class Settings:
             max_block_per_alert=_int("MAX_BLOCK_PER_ALERT", 20),
             geoip_enabled=_bool("GEOIP_ENABLED", True),
             geoip_db_path=_get("GEOIP_DB_PATH", ""),
+            ai_llm_base_url=_get("AI_LLM_BASE_URL", ""),      # 如 https://api.openai.com/v1
+            ai_llm_api_key=_get("AI_LLM_API_KEY", ""),
+            ai_llm_model=_get("AI_LLM_MODEL", "gpt-4o-mini"),
         )
 
     @property

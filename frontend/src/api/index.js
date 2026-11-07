@@ -11,6 +11,7 @@ http.interceptors.request.use((config) => {
 
 http.interceptors.response.use(
   (response) => {
+    if (response.config.responseType === 'blob') return response.data
     const body = response.data
     if (body && body.code !== 0) {
       ElMessage.error(body.msg || '请求失败')
@@ -37,6 +38,10 @@ export const api = {
   me: () => http.get('/auth/me'),
 
   dashboard: () => http.get('/dashboard'),
+  inspectionLatest: () => http.get('/inspections/latest'),
+  inspectionRun: () => http.post('/inspections/run', null, { timeout: 90000 }),
+  inspectionReports: (params) => http.get('/inspections/reports', { params }),
+  inspectionReport: (id) => http.get(`/inspections/reports/${id}`),
   alerts: (params) => http.get('/alerts', { params }),
   alert: (id) => http.get(`/alerts/${id}`),
   genericAlert: (data) => http.post('/alerts/generic', data),
@@ -46,10 +51,14 @@ export const api = {
   addIocIp: (data) => http.post('/ioc/ips', data),
   updateIocIp: (id, data) => http.put(`/ioc/ips/${id}`, data),
   deleteIocIp: (id) => http.delete(`/ioc/ips/${id}`),
+  exportIocIps: (params) => http.get('/ioc/ips/export', { params, responseType: 'blob' }),
+  importIocIps: (formData) => http.post('/ioc/ips/import', formData, { timeout: 120000 }),
   iocDomains: (params) => http.get('/ioc/domains', { params }),
   iocDomain: (id) => http.get(`/ioc/domains/${id}`),
   addIocDomain: (data) => http.post('/ioc/domains', data),
   deleteIocDomain: (id) => http.delete(`/ioc/domains/${id}`),
+  exportIocDomains: (params) => http.get('/ioc/domains/export', { params, responseType: 'blob' }),
+  importIocDomains: (formData) => http.post('/ioc/domains/import', formData, { timeout: 120000 }),
 
   whitelist: (params) => http.get('/whitelist/ips', { params }),
   checkWhitelist: (ip) => http.get('/whitelist/ips/check', { params: { ip } }),

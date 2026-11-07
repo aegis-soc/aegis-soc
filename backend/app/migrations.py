@@ -99,6 +99,10 @@ def upgrade_sqlite_schema(engine: Engine) -> None:
     _ensure_columns(engine, "ioc_indicator", GEO_COLUMNS)
     _ensure_geo_index(engine)
 
+    # 巡检报告后加的 metrics KPI 字段：老库补列即可，不需重建
+    if "inspection_report" in inspector.get_table_names():
+        _ensure_columns(engine, "inspection_report", {"metrics": "JSON"})
+
 
 def _rebuild_as_history_table(engine: Engine, columns: list[str]) -> None:
     logger.warning("检测到旧版 ioc_indicator，开始重建为流水表（保留历史数据）")

@@ -370,3 +370,23 @@ CREATE TABLE IF NOT EXISTS `operation_audit` (
   KEY `idx_audit_type` (`op_type`),
   KEY `idx_audit_time` (`created_at`)
 ) ENGINE=InnoDB COMMENT='全链路操作审计';
+
+-- =============================================================================
+-- AI 巡检报告（v1.1 新增）
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS `inspection_report` (
+  `id`           BIGINT NOT NULL AUTO_INCREMENT,
+  `score`        INT          NOT NULL DEFAULT 0 COMMENT '0-100 加权健康分（安全效果层权重更高）',
+  `overall`      VARCHAR(16)  NOT NULL DEFAULT 'ok' COMMENT 'ok / warn / fail',
+  `trigger`      VARCHAR(16)  NOT NULL DEFAULT 'manual' COMMENT 'manual / cron',
+  `duration_ms`  INT          NOT NULL DEFAULT 0,
+  `checks`       JSON         NULL COMMENT '各检查项结果数组：key/name/status/score/summary/data/advice',
+  `metrics`      JSON         NULL COMMENT '核心 KPI 快照：处置率/缺口/持续攻击/来源覆盖/环比分数',
+  `summary`      TEXT         NULL COMMENT '总结（配置 LLM 后为 AI 生成，否则规则生成）',
+  `ai_enhanced`  TINYINT      NOT NULL DEFAULT 0 COMMENT '1 = 总结由大模型生成',
+  `created_by`   VARCHAR(64)  NULL,
+  `created_at`   DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_inspect_time` (`created_at`)
+) ENGINE=InnoDB COMMENT='AI 巡检报告';
+

@@ -10,8 +10,8 @@ USE `aegis_soc`;
 -- ---------- 角色 ----------
 INSERT INTO `system_role` (`role_code`, `role_name`, `permission_json`, `description`) VALUES
   ('admin',    '系统管理员', '["*"]', '全部权限，含用户管理与系统设置'),
-  ('operator', '安全运营',   '["alert:*","ioc:*","whitelist:*","device:*","plugin:*","policy:*","task:*","audit:read","dashboard:read"]', '日常告警处置、IOC 与策略管理'),
-  ('auditor',  '只读审计员', '["alert:read","ioc:read","whitelist:read","device:read","plugin:read","policy:read","task:read","audit:read","dashboard:read"]', '仅查看，禁止任何写操作')
+  ('operator', '安全运营',   '["alert:*","ioc:*","whitelist:*","device:*","plugin:*","policy:*","task:*","audit:read","dashboard:read","inspection:read","inspection:run"]', '日常告警处置、IOC 与策略管理'),
+  ('auditor',  '只读审计员', '["alert:read","ioc:read","whitelist:read","device:read","plugin:read","policy:read","task:read","audit:read","dashboard:read","inspection:read"]', '仅查看，禁止任何写操作')
 ON DUPLICATE KEY UPDATE `role_name` = VALUES(`role_name`);
 
 -- ---------- 内置插件注册表 ----------

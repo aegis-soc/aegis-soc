@@ -362,3 +362,28 @@ class SystemStatusOut(BaseModel):
     task_eager: bool
     database: str
     plugin_count: int
+
+
+class InspectionCheck(BaseModel):
+    key: str
+    name: str
+    status: str
+    score: int
+    summary: str
+    advice: str = ""
+    data: Any = None
+
+
+class InspectionOut(_Out):
+    id: int
+    score: int
+    overall: str
+    trigger: str
+    duration_ms: int
+    checks: Any = None
+    metrics: Any = None
+    summary: str | None = None
+    ai_enhanced: int = 0
+    created_by: str | None = None
+    created_at: datetime
+

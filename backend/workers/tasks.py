@@ -184,3 +184,17 @@ def compensate_pending() -> dict[str, Any]:
         return {"scanned": len(tasks), "redispatched": redispatched}
     finally:
         db.close()
+
+
+@celery_app.task(name="aegis.run_inspection")
+def run_inspection() -> dict[str, Any]:
+    """定时 AI 巡检：由 Beat 每天触发，报告落库供「AI 巡检」页面查看。"""
+    from app.services.inspector import run_inspection as _run
+
+    db = SessionLocal()
+    try:
+        report = _run(db, trigger="cron", created_by="celery")
+        return {"score": report.score, "overall": report.overall, "report_id": report.id}
+    finally:
+        db.close()
+

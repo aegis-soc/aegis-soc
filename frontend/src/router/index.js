@@ -10,6 +10,7 @@ const routes = [
     redirect: '/dashboard',
     children: [
       { path: 'dashboard', name: 'dashboard', component: () => import('../views/Dashboard.vue'), meta: { title: '首页大盘', icon: 'Odometer' } },
+      { path: 'inspections', name: 'inspections', component: () => import('../views/Inspection.vue'), meta: { title: 'AI 巡检', icon: 'Search' } },
       { path: 'alerts', name: 'alerts', component: () => import('../views/Alerts.vue'), meta: { title: '告警中心', icon: 'Bell' } },
       { path: 'blacklist-ip', name: 'blacklist-ip', component: () => import('../views/BlacklistIP.vue'), meta: { title: 'IP 黑名单', icon: 'Lock' } },
       { path: 'blacklist-domain', name: 'blacklist-domain', component: () => import('../views/BlacklistDomain.vue'), meta: { title: '域名黑名单', icon: 'Link' } },

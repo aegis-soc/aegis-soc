@@ -420,3 +420,24 @@ class OperationAudit(Base):
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
     client_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+class InspectionReport(Base):
+    """AI 巡检报告：每次巡检生成一条，checks 为各检查项结果的 JSON 数组。"""
+
+    __tablename__ = "inspection_report"
+    __table_args__ = (Index("idx_inspect_time", "created_at"),)
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 0-100 健康分
+    overall: Mapped[str] = mapped_column(String(16), nullable=False, default="ok")  # ok / warn / fail
+    trigger: Mapped[str] = mapped_column(String(16), nullable=False, default="manual")  # manual / cron
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    checks: Mapped[Any | None] = mapped_column(JSON, nullable=True)
+    # 核心 KPI 快照（处置率/缺口/持续攻击/来源覆盖等），前端 KPI 条与趋势取这里，
+    # 不必再遍历 checks 反推；历史报告也能保留当时的运营口径。
+    metrics: Mapped[Any | None] = mapped_column(JSON, nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ai_enhanced: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)  # 1 = LLM 生成
+    created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)

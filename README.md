@@ -23,6 +23,7 @@
 - ✅ **插件化设备网关**：统一接口 + Manifest 能力声明，新增设备只写插件，平台主体不改
 - ✅ **IOC 生命周期**：IP / 域名黑名单、IP 白名单（单 IP / CIDR / 批量导入）、过期自动解封、来源标记、标签备注
 - ✅ **黑名单流水**：同一 IP 每次命中独立成条（同值不合并），各自保留添加时间 / 过期时间 / 来源告警；来自 IPS / WAF / 零信任 / 威胁情报 自动分类；被拦截的地址以 `rejected` 留痕，可回答「为什么没封」
+- ✅ **AI 巡检**：两层体检——先看防护是否生效（三流覆盖、**封禁缺口归因**、处置率 7 日趋势、跨日持续攻击），再看平台是否健康（设备、黑名单、任务、到期解封、白名单、策略、系统）；输出加权健康分、KPI 快照与可执行建议，每天 08:30 自动巡检，报告可回看；可选接入大模型生成总结
 - ✅ **IP 归属地**：黑名单直接显示国家 / 省·市（如「中国 · 广东省·深圳市」），来自 ip2region 离线库（11 MB，无需联网、无需 ipip 授权），写入时快照落库、支持按国家筛选
 - ✅ **硬性安全边界**：白名单优先、内网/环回/保留地址禁止封禁、IOC 类型与设备能力匹配、全局熔断开关
 - ✅ **可靠异步任务**：Celery + Beat，幂等约束、指数退避重试、超时控制、到期自动解封
@@ -144,7 +145,7 @@ aegis-soc/
 ├── frontend/             # Vue3 + Element Plus + Vite
 ├── deploy/               # nginx.conf / my.cnf
 ├── scripts/              # smoke_test.py（部署后一键冒烟验收，仅标准库）
-├── docs/                 # install / deploy-cloud / verify / graylog / plugin-dev / api / security / architecture / blacklist-history / geoip
+├── docs/                 # install / deploy-cloud / verify / graylog / plugin-dev / api / security / architecture / blacklist-history / geoip / ai-inspection
 ├── .github/workflows/    # ci.yml（编译+测试+构建+编排校验）、release.yml（tag 触发多架构镜像发布）
 ├── docker-compose.yml
 ├── .env.example
