@@ -16,7 +16,7 @@ CONFIG = {
     "instance_id": "waf_test_001",
     "template_id": 5327,
     "access_key_id": "ak",
-    "access_key_secret": "sk",
+    "access_key_secret": "test-secret-key-a1b2c3d4e5f6g7h8",
     "rule_name": "aegis-block",
     "max_entries": 200,
     "max_rules": 5,
@@ -205,7 +205,8 @@ def test_signature_parameters(monkeypatch):
     assert params["Version"] == "2021-10-01"
     assert params["SignatureMethod"] == "HMAC-SHA1"
     assert params["Signature"]
-    assert "sk" not in json.dumps(params)  # 密钥不得出现在请求参数里
+    # 密钥本体不得出现在请求参数里（不能用 2 字符短串做子串判断：base64 签名可能随机包含它）
+    assert CONFIG["access_key_secret"] not in json.dumps(params)
 
 
 def test_auto_create_rule_false_never_creates_rule():
