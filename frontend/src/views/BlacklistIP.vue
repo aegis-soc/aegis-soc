@@ -2,7 +2,11 @@
   <div class="page">
     <div class="page-header">
       <div><h2 class="page-title">IP 黑名单</h2><p class="page-desc">同一 IP 多次命中按流水记录保存，不合并；被拦截的 IOC 也会留痕，状态为 rejected / whitelisted；国家/地区由 ip2region 离线库在写入时记录</p></div>
-      <el-button type="primary" :icon="Plus" @click="dialog = true">新增黑名单</el-button>
+      <div>
+        <el-button :icon="Download" @click="doExport">导出 CSV</el-button>
+        <el-button :icon="Upload" @click="openImport">批量导入</el-button>
+        <el-button type="primary" :icon="Plus" @click="dialog = true">新增黑名单</el-button>
+      </div>
     </div>
     <div class="filter-bar">
       <el-select v-model="query.status" placeholder="状态" clearable style="width: 140px">
@@ -81,13 +85,39 @@
       </el-form>
       <template #footer><el-button @click="dialog = false">取消</el-button><el-button type="primary" @click="submit">提交</el-button></template>
     </el-dialog>
+
+    <el-dialog v-model="importDialog" title="批量导入 IP 黑名单" width="560px">
+      <el-alert type="info" :closable="false" style="margin-bottom: 12px"
+        title="每行一个公网 IP 或 CIDR（最大 /16），支持备注：1.2.3.4,攻击源 或 1.2.3.4 # 攻击源；# 开头为注释行" />
+      <el-form label-width="100px">
+        <el-form-item label="粘贴文本">
+          <el-input v-model="importText" type="textarea" :rows="7" placeholder="1.2.3.4&#10;5.6.7.0/24,扫描源&#10;# 这是注释" />
+        </el-form-item>
+        <el-form-item label="或上传文件">
+          <input type="file" accept=".txt,.csv,.log" @change="onImportFile" />
+          <span v-if="importFile" class="text-muted" style="margin-left: 8px; font-size: 12px">{{ importFile.name }}</span>
+        </el-form-item>
+        <el-form-item label="封禁时长(秒)"><el-input-number v-model="importForm.duration_seconds" :min="0" :step="3600" /><span class="text-muted" style="margin-left: 8px; font-size: 11px">0 = 永久</span></el-form-item>
+        <el-form-item label="立即下发"><el-switch v-model="importForm.dispatch" /></el-form-item>
+      </el-form>
+      <el-alert v-if="importResult" :type="importResult.errors?.length ? 'warning' : 'success'" :closable="false">
+        <p>新增 {{ importResult.created }} 条，已存在跳过 {{ importResult.skipped }} 条，白名单豁免 {{ importResult.whitelisted }} 条，下发任务 {{ importResult.task_count }} 个</p>
+        <p v-if="importResult.errors?.length" style="margin-top: 4px; font-size: 12px">
+          {{ importResult.errors.slice(0, 10).join('；') }}{{ importResult.errors.length > 10 ? ` 等 ${importResult.errors.length} 条` : '' }}
+        </p>
+      </el-alert>
+      <template #footer>
+        <el-button @click="importDialog = false">关闭</el-button>
+        <el-button type="primary" :loading="importing" @click="submitImport">导入</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Download, Plus, Upload } from '@element-plus/icons-vue'
 import { api } from '../api'
 
 const rows = ref([])
@@ -176,6 +206,57 @@ async function remove(row) {
     ElMessage.success(`已删除，生成 ${data.unblock_task_count} 个解封任务`)
     load()
   } catch (e) { /* 拦截器已提示 */ }
+}
+
+// ---------------- 批量导入 / 导出 ----------------
+const importDialog = ref(false)
+const importing = ref(false)
+const importText = ref('')
+const importFile = ref(null)
+const importResult = ref(null)
+const importForm = reactive({ dispatch: true, duration_seconds: 7200 })
+
+function openImport() {
+  importText.value = ''
+  importFile.value = null
+  importResult.value = null
+  importDialog.value = true
+}
+function onImportFile(e) {
+  importFile.value = e.target.files?.[0] || null
+}
+async function submitImport() {
+  if (!importText.value.trim() && !importFile.value) {
+    ElMessage.warning('请粘贴文本或选择文件')
+    return
+  }
+  importing.value = true
+  try {
+    const fd = new FormData()
+    if (importFile.value) fd.append('file', importFile.value)
+    if (importText.value.trim()) fd.append('text', importText.value)
+    fd.append('dispatch', String(importForm.dispatch))
+    fd.append('duration_seconds', String(importForm.duration_seconds || 0) )
+    const data = await api.importIocIps(fd)
+    importResult.value = data
+    ElMessage.success(`导入完成：新增 ${data.created} 条`)
+    load()
+  } catch (e) { /* 拦截器已提示 */ } finally { importing.value = false }
+}
+async function doExport() {
+  try {
+    const params = { ...query }
+    delete params.page
+    delete params.page_size
+    Object.keys(params).forEach((k) => { if (params[k] === '') delete params[k] })
+    const blob = await api.exportIocIps(params)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `blacklist-ip-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch (e) { ElMessage.error('导出失败') }
 }
 onMounted(load)
 </script>

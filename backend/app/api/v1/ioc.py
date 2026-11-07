@@ -5,11 +5,13 @@
 """
 from __future__ import annotations
 
+import csv
+import io
 import ipaddress
 import uuid
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
@@ -207,16 +209,15 @@ def _unblock_ioc(db: Session, row: IocIndicator, request: Request, user: SystemU
     return len(task_ids)
 
 
-def _list_ioc(
+def _ioc_query(
     ioc_type: str,
     db: Session,
-    page: int,
-    page_size: int,
     status: str | None,
     keyword: str | None,
     source_type: str | None = None,
     country: str | None = None,
 ):
+    """列表与导出共用的过滤条件。"""
     stmt = select(IocIndicator).where(IocIndicator.ioc_type == ioc_type)
     if status:
         stmt = stmt.where(IocIndicator.status == status)
@@ -236,11 +237,235 @@ def _list_ioc(
                 IocIndicator.geo_city.like(f"%{keyword}%"),
             )
         )
-    stmt = stmt.order_by(IocIndicator.created_at.desc(), IocIndicator.id.desc())
-    rows, total = paginate(stmt, db, page, page_size)
+    return stmt.order_by(IocIndicator.created_at.desc(), IocIndicator.id.desc())
+
+
+def _list_ioc(
+    ioc_type: str,
+    db: Session,
+    page: int,
+    page_size: int,
+    status: str | None,
+    keyword: str | None,
+    source_type: str | None = None,
+    country: str | None = None,
+):
+    rows, total = paginate(_ioc_query(ioc_type, db, status, keyword, source_type, country), db, page, page_size)
     return ok({
         "items": [IocOut.model_validate(r).model_dump(mode="json") for r in rows],
         "total": total, "page": page, "page_size": page_size,
+    })
+
+
+# ---------------------------------------------------------------- 导出 / 导入
+
+_EXPORT_HEADERS_IP = [
+    "ioc_value", "status", "source_type", "source_detail", "risk_level", "confidence",
+    "created_at", "expire_at", "remark",
+    "geo_country", "geo_province", "geo_city", "geo_isp",
+]
+_EXPORT_HEADERS_DOMAIN = [
+    "ioc_value", "status", "source_type", "source_detail", "risk_level", "confidence",
+    "created_at", "expire_at", "remark",
+]
+
+
+def _csv_cell(value) -> str:
+    if value is None:
+        return ""
+    if hasattr(value, "strftime"):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    return str(value)
+
+
+def _export_ioc(
+    ioc_type: str,
+    db: Session,
+    status: str | None,
+    keyword: str | None,
+    source_type: str | None = None,
+    country: str | None = None,
+) -> Response:
+    """按当前筛选条件导出 CSV（UTF-8 BOM，Excel 直接打开不乱码）。"""
+    rows = db.execute(_ioc_query(ioc_type, db, status, keyword, source_type, country)).scalars().all()
+    headers = _EXPORT_HEADERS_IP if ioc_type == "IP" else _EXPORT_HEADERS_DOMAIN
+    buf = io.StringIO()
+    buf.write("\ufeff")
+    writer = csv.writer(buf)
+    writer.writerow(headers)
+    for r in rows:
+        writer.writerow([
+            r.normalized_value, r.status, r.source_type or "", r.source_detail or "",
+            r.risk_level or "", "" if r.confidence is None else r.confidence,
+            _csv_cell(r.created_at), _csv_cell(r.expire_at), r.remark or "",
+            *( [r.geo_country or "", r.geo_province or "", r.geo_city or "", r.geo_isp or ""]
+               if ioc_type == "IP" else [] ),
+        ])
+    name = "blacklist-ip" if ioc_type == "IP" else "blacklist-domain"
+    filename = f"{name}-{utcnow().strftime('%Y%m%d%H%M%S')}.csv"
+    return Response(
+        content=buf.getvalue().encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+def _read_upload_lines(file: UploadFile | None) -> list[str]:
+    """读取上传文件，按行拆分；兼容 UTF-8（含 BOM）与 GBK 编码。"""
+    if file is None:
+        return []
+    raw = file.file.read()
+    if len(raw) > 2 * 1024 * 1024:
+        raise BizError("导入文件过大（最大 2MB）", 400, 400)
+    for encoding in ("utf-8-sig", "gbk"):
+        try:
+            return raw.decode(encoding).splitlines()
+        except UnicodeDecodeError:
+            continue
+    raise BizError("无法识别文件编码，请使用 UTF-8 或 GBK 编码的文本/CSV 文件", 400, 400)
+
+
+def _parse_import_line(line_no: int, line: str) -> tuple[str, str | None] | None:
+    """支持三种写法：`1.2.3.4`、`1.2.3.4,备注`、`1.2.3.4 # 备注`；空行与 # 开头注释跳过。"""
+    text = line.strip()
+    if not text or text.startswith("#"):
+        return None
+    remark: str | None = None
+    if "#" in text:
+        text, _, tail = text.partition("#")
+        remark = tail.strip() or None
+    text = text.strip()
+    if not text:
+        return None
+    if "," in text:
+        value, _, tail = text.partition(",")
+        value, remark = value.strip(), (tail.strip() or remark)
+    else:
+        parts = text.split(None, 1)
+        value = parts[0]
+        if len(parts) > 1:
+            remark = parts[1].strip() or remark
+    if not value:
+        raise BizError(f"第 {line_no} 行: 值为空")
+    return value, remark
+
+
+def _import_ioc(
+    ioc_type: str,
+    db: Session,
+    request: Request,
+    user: SystemUser,
+    file: UploadFile | None = None,
+    text: str | None = None,
+    dispatch: bool = True,
+    duration_seconds: int | None = None,
+    remark: str | None = None,
+):
+    lines = _read_upload_lines(file)
+    if text:
+        lines.extend(text.splitlines())
+    if not lines or not [l for l in lines if l.strip() and not l.strip().startswith("#")]:
+        raise BizError("导入内容为空：请粘贴文本或选择文件", 400, 400)
+    if len(lines) > 5000:
+        raise BizError("单次最多导入 5000 行", 400, 400)
+
+    expire_at = (utcnow() + timedelta(seconds=duration_seconds)) if duration_seconds else None
+    created, skipped, whitelisted, errors = 0, 0, 0, []
+    new_rows: list[IocIndicator] = []
+    geo_pending: list[int] = []
+
+    for line_no, line in enumerate(lines, start=1):
+        try:
+            parsed = _parse_import_line(line_no, line)
+        except BizError as exc:
+            errors.append(exc.msg)
+            continue
+        if parsed is None:
+            continue
+        value, line_remark = parsed
+
+        if ioc_type == "IP":
+            try:
+                addr = ipaddress.ip_network(value, strict=False).network_address
+                hit, matched = check_whitelist(db, str(addr))
+            except ValueError:
+                hit, matched = False, None
+            if hit:
+                whitelisted += 1
+                errors.append(f"第 {line_no} 行: {value} 命中白名单 {matched}，已跳过")
+                continue
+
+        check = validate_ioc(ioc_type, value)
+        if not check.ok:
+            errors.append(f"第 {line_no} 行: {check.message}")
+            continue
+
+        exists = (
+            db.query(IocIndicator)
+            .filter(
+                IocIndicator.ioc_type == ioc_type,
+                IocIndicator.normalized_value == check.normalized,
+                IocIndicator.status == "active",
+            )
+            .first()
+        )
+        if exists:
+            skipped += 1
+            continue
+
+        row = IocIndicator(
+            ioc_type=ioc_type,
+            ioc_value=check.normalized,
+            normalized_value=check.normalized,
+            created_by=user.username,
+            source_type="MANUAL",
+            source_detail=f"import:{user.username}",
+            source_count=1,
+            expire_at=expire_at,
+            remark=remark or line_remark or "批量导入",
+        )
+        db.add(row)
+        db.flush()
+        if ioc_type == "IP":
+            db.add(IocIpDetail(
+                ioc_id=row.id, ip_bin=check.ip_bin, prefix_len=check.prefix_len,
+                address_family=check.address_family, cidr=check.cidr,
+            ))
+            geo_pending.append(row.id)
+        else:
+            db.add(IocDomainDetail(
+                ioc_id=row.id, match_mode=check.match_mode,
+                root_domain=check.root_domain, is_wildcard=1 if check.is_wildcard else 0,
+            ))
+        new_rows.append(row)
+        created += 1
+
+    # 统一生成封禁任务：一次 request_id、一次提交、一次下发，避免逐行 commit
+    task_ids: list[int] = []
+    if dispatch and new_rows:
+        request_id = f"import-{uuid.uuid4().hex[:16]}"
+        for row in new_rows:
+            for device in match_devices(db, row.ioc_type, "BLOCK"):
+                task = create_task(
+                    db, ioc=row, device=device, operation="BLOCK",
+                    request_id=request_id, expire_at=row.expire_at,
+                )
+                if task:
+                    task_ids.append(task.id)
+
+    write_audit(
+        db, "IOC_IMPORT", operator=user.username, role_code=user.role_code,
+        target_type=ioc_type,
+        content={"created": created, "skipped": skipped, "whitelisted": whitelisted,
+                 "dispatch": dispatch, "task_count": len(task_ids), "errors": errors[:20]},
+        client_ip=client_ip(request),
+    )
+    db.commit()
+    dispatch_tasks(task_ids)
+    geoip.schedule_fill(geo_pending)
+    return ok({
+        "created": created, "skipped": skipped, "whitelisted": whitelisted,
+        "task_count": len(task_ids), "errors": errors,
     })
 
 
@@ -256,6 +481,57 @@ def list_ip_ioc(
     _=Depends(require_perms("ioc:read")),
 ):
     return _list_ioc("IP", db, page, page_size, status, keyword, source_type, country)
+
+
+@router.get("/ioc/ips/export")
+def export_ip_ioc(
+    status: str | None = None,
+    keyword: str | None = None,
+    source_type: str | None = None,
+    country: str | None = None,
+    db: Session = Depends(get_db),
+    _=Depends(require_perms("ioc:read")),
+):
+    return _export_ioc("IP", db, status, keyword, source_type, country)
+
+
+@router.post("/ioc/ips/import")
+def import_ip_ioc(
+    request: Request,
+    file: UploadFile | None = File(None),
+    text: str | None = Form(None),
+    dispatch: bool = Form(True),
+    duration_seconds: int | None = Form(None),
+    remark: str | None = Form(None),
+    db: Session = Depends(get_db),
+    user: SystemUser = Depends(require_perms("ioc:*")),
+):
+    return _import_ioc("IP", db, request, user, file, text, dispatch, duration_seconds, remark)
+
+
+@router.get("/ioc/domains/export")
+def export_domain_ioc(
+    status: str | None = None,
+    keyword: str | None = None,
+    source_type: str | None = None,
+    db: Session = Depends(get_db),
+    _=Depends(require_perms("ioc:read")),
+):
+    return _export_ioc("DOMAIN", db, status, keyword, source_type)
+
+
+@router.post("/ioc/domains/import")
+def import_domain_ioc(
+    request: Request,
+    file: UploadFile | None = File(None),
+    text: str | None = Form(None),
+    dispatch: bool = Form(True),
+    duration_seconds: int | None = Form(None),
+    remark: str | None = Form(None),
+    db: Session = Depends(get_db),
+    user: SystemUser = Depends(require_perms("ioc:*")),
+):
+    return _import_ioc("DOMAIN", db, request, user, file, text, dispatch, duration_seconds, remark)
 
 
 @router.post("/ioc/ips")

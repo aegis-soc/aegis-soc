@@ -2,7 +2,11 @@
   <div class="page">
     <div class="page-header">
       <div><h2 class="page-title">域名黑名单</h2><p class="page-desc">恶意域名 IOC，支持精确 / 子域 / 通配符匹配语义</p></div>
-      <el-button type="primary" :icon="Plus" @click="dialog = true">新增域名</el-button>
+      <div>
+        <el-button :icon="Download" @click="doExport">导出 CSV</el-button>
+        <el-button :icon="Upload" @click="openImport">批量导入</el-button>
+        <el-button type="primary" :icon="Plus" @click="dialog = true">新增域名</el-button>
+      </div>
     </div>
     <div class="filter-bar">
       <el-select v-model="query.status" placeholder="状态" clearable style="width: 140px">
@@ -59,13 +63,39 @@
       </el-form>
       <template #footer><el-button @click="dialog = false">取消</el-button><el-button type="primary" @click="submit">提交</el-button></template>
     </el-dialog>
+
+    <el-dialog v-model="importDialog" title="批量导入域名黑名单" width="560px">
+      <el-alert type="info" :closable="false" style="margin-bottom: 12px"
+        title="每行一个域名（支持 *.example.com 通配符），支持备注：evil.com,C2服务器 或 evil.com # C2服务器；# 开头为注释行" />
+      <el-form label-width="100px">
+        <el-form-item label="粘贴文本">
+          <el-input v-model="importText" type="textarea" :rows="7" placeholder="evil.example.com&#10;*.malware.cn,C2 基础设施&#10;# 这是注释" />
+        </el-form-item>
+        <el-form-item label="或上传文件">
+          <input type="file" accept=".txt,.csv,.log" @change="onImportFile" />
+          <span v-if="importFile" class="text-muted" style="margin-left: 8px; font-size: 12px">{{ importFile.name }}</span>
+        </el-form-item>
+        <el-form-item label="备注"><el-input v-model="importForm.remark" placeholder="整批备注（行内备注优先）" /></el-form-item>
+        <el-form-item label="立即下发"><el-switch v-model="importForm.dispatch" /></el-form-item>
+      </el-form>
+      <el-alert v-if="importResult" :type="importResult.errors?.length ? 'warning' : 'success'" :closable="false">
+        <p>新增 {{ importResult.created }} 条，已存在跳过 {{ importResult.skipped }} 条，白名单豁免 {{ importResult.whitelisted }} 条，下发任务 {{ importResult.task_count }} 个</p>
+        <p v-if="importResult.errors?.length" style="margin-top: 4px; font-size: 12px">
+          {{ importResult.errors.slice(0, 10).join('；') }}{{ importResult.errors.length > 10 ? ` 等 ${importResult.errors.length} 条` : '' }}
+        </p>
+      </el-alert>
+      <template #footer>
+        <el-button @click="importDialog = false">关闭</el-button>
+        <el-button type="primary" :loading="importing" @click="submitImport">导入</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Download, Plus, Upload } from '@element-plus/icons-vue'
 import { api } from '../api'
 
 const rows = ref([])
@@ -132,6 +162,57 @@ async function submit() {
 }
 async function remove(row) {
   try { await api.deleteIocDomain(row.id); ElMessage.success('已删除'); load() } catch (e) { /* 拦截器已提示 */ }
+}
+
+// ---------------- 批量导入 / 导出 ----------------
+const importDialog = ref(false)
+const importing = ref(false)
+const importText = ref('')
+const importFile = ref(null)
+const importResult = ref(null)
+const importForm = reactive({ dispatch: true, remark: '' })
+
+function openImport() {
+  importText.value = ''
+  importFile.value = null
+  importResult.value = null
+  importDialog.value = true
+}
+function onImportFile(e) {
+  importFile.value = e.target.files?.[0] || null
+}
+async function submitImport() {
+  if (!importText.value.trim() && !importFile.value) {
+    ElMessage.warning('请粘贴文本或选择文件')
+    return
+  }
+  importing.value = true
+  try {
+    const fd = new FormData()
+    if (importFile.value) fd.append('file', importFile.value)
+    if (importText.value.trim()) fd.append('text', importText.value)
+    fd.append('dispatch', String(importForm.dispatch))
+    if (importForm.remark.trim()) fd.append('remark', importForm.remark.trim())
+    const data = await api.importIocDomains(fd)
+    importResult.value = data
+    ElMessage.success(`导入完成：新增 ${data.created} 条`)
+    load()
+  } catch (e) { /* 拦截器已提示 */ } finally { importing.value = false }
+}
+async function doExport() {
+  try {
+    const params = { ...query }
+    delete params.page
+    delete params.page_size
+    Object.keys(params).forEach((k) => { if (params[k] === '') delete params[k] })
+    const blob = await api.exportIocDomains(params)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `blacklist-domain-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch (e) { ElMessage.error('导出失败') }
 }
 onMounted(load)
 </script>
