@@ -265,6 +265,15 @@ Device plugins, bug fixes and documentation improvements are welcome. Read [CONT
 
 ---
 
+## 👤 Author & Contact
+
+- **Maintainer**: AegisSoc team
+- **Email**: [30002811@qq.com](mailto:30002811@qq.com)
+- **Bug reports & feature requests**: [GitHub Issues](https://github.com/aegis-soc/aegis-soc/issues)
+- Device-plugin contributions and cooperation inquiries are welcome via email.
+
+---
+
 ## 📄 License
 
 [Apache License 2.0](LICENSE) · Copyright 2026 AegisSoc contributors

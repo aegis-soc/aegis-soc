@@ -265,6 +265,15 @@ git tag v1.0.0 && git push origin v1.0.0   # 打 tag 即触发发布
 
 ---
 
+## 👤 作者与联系
+
+- **维护者**：宙斯盾 AegisSoc 团队
+- **邮箱**：[30002811@qq.com](mailto:30002811@qq.com)
+- **问题反馈**：[GitHub Issues](https://github.com/aegis-soc/aegis-soc/issues)
+- 欢迎通过邮件联系设备插件合作与二次开发事宜。
+
+---
+
 ## 📄 License
 
 [Apache License 2.0](LICENSE) · Copyright 2026 AegisSoc contributors
