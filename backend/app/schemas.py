@@ -466,3 +466,47 @@ class PatrolProbeIn(BaseModel):
     mcp_tool: str | None = None
     mcp_stream_tool: str | None = None
     streams: list[PatrolStreamConfig] | None = None
+
+
+# ---------------- 人机对话 ----------------
+class ChatAskIn(BaseModel):
+    """一次提问。``session_id`` 为空表示开新会话。"""
+
+    question: str = Field(min_length=1, max_length=300)
+    session_id: int | None = None
+
+
+class ChatSessionOut(_Out):
+    id: int
+    title: str
+    message_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class ChatMessageOut(_Out):
+    id: int
+    role: str
+    content: str
+    blocks: list[Any] | None = None
+    route: str | None = None
+    trace: Any | None = None
+    elapsed_ms: int = 0
+    created_at: datetime
+
+
+class ChatAskOut(BaseModel):
+    """回答：``answer`` 给人看，``blocks`` 给前端渲染，``trace`` 用来复盘。"""
+
+    session_id: int
+    message_id: int
+    answer: str
+    blocks: list[dict[str, Any]] = Field(default_factory=list)
+    trace: dict[str, Any] = Field(default_factory=dict)
+    suggestions: list[str] = Field(default_factory=list)
+    route: str = "db"
+
+
+class ChatCatalogOut(BaseModel):
+    sources: list[dict[str, Any]] = Field(default_factory=list)
+    suggestions: list[str] = Field(default_factory=list)

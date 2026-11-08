@@ -525,3 +525,43 @@ class PatrolCandidate(Base):
     first_seen: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_seen: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+class ChatSession(Base):
+    """人机对话会话：一次"开个新对话"就是一条。
+
+    刻意按用户 + 会话两级存：运营复盘时常问"我当时是怎么问出来的"，
+    只有消息没有会话边界，翻起来是散的。
+    """
+
+    __tablename__ = "chat_session"
+    __table_args__ = (Index("idx_chat_session_user", "username"),)
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(String(120), nullable=False, default="新对话")
+    message_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class ChatMessage(Base):
+    """一条问题或一条回答。
+
+    ``payload`` 存渲染块（表格/KPI/柱图），``dsl`` 存当时解析出的 DSL——
+    后者是排查"为什么这么答"的唯一凭据，比日志更耐久，所以单独一列。
+    """
+
+    __tablename__ = "chat_message"
+    __table_args__ = (Index("idx_chat_msg_session", "session_id"),)
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    session_id: Mapped[int] = mapped_column(BigIntPK, nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)      # user / assistant
+    content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    blocks: Mapped[Any | None] = mapped_column(JSON, nullable=True)
+    route: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    dsl: Mapped[Any | None] = mapped_column(JSON, nullable=True)
+    trace: Mapped[Any | None] = mapped_column(JSON, nullable=True)
+    elapsed_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)

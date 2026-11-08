@@ -51,6 +51,13 @@ export const api = {
   patrolConfig: () => http.get('/patrols/config'),
   patrolConfigSave: (data) => http.put('/patrols/config', data),
   patrolMcpTest: (data) => http.post('/patrols/mcp/test', data, { timeout: 60000 }),
+
+  chatAsk: (data) => http.post('/chat/ask', data, { timeout: 120000 }),
+  chatSessions: () => http.get('/chat/sessions'),
+  chatSession: (id) => http.get(`/chat/sessions/${id}`),
+  chatDeleteSession: (id) => http.delete(`/chat/sessions/${id}`),
+  chatCatalog: () => http.get('/chat/catalog'),
+
   alerts: (params) => http.get('/alerts', { params }),
   alert: (id) => http.get(`/alerts/${id}`),
   genericAlert: (data) => http.post('/alerts/generic', data),

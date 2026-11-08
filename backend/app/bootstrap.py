@@ -44,7 +44,7 @@ ROLES: list[dict[str, Any]] = [
         "permission_json": [
             "alert:*", "ioc:*", "whitelist:*", "device:*", "plugin:*",
             "policy:*", "task:*", "audit:read", "dashboard:read",
-            "inspection:read", "inspection:run",
+            "inspection:read", "inspection:run", "chat:ask",
         ],
         "description": "日常告警处置、IOC 与策略管理",
     },
@@ -54,7 +54,7 @@ ROLES: list[dict[str, Any]] = [
         "permission_json": [
             "alert:read", "ioc:read", "whitelist:read", "device:read", "plugin:read",
             "policy:read", "task:read", "audit:read", "dashboard:read",
-            "inspection:read",
+            "inspection:read", "chat:ask",
         ],
         "description": "仅查看，禁止任何写操作",
     },
@@ -91,6 +91,23 @@ def _get_or_create(db: Session, model: type, *, lookup: dict[str, Any], defaults
     db.add(row)
     db.flush()
     return row
+
+
+def _sync_role_permissions(db: Session) -> None:
+    """老库升级：内置角色缺新权限时补齐。
+    只加不减——客户自己加的额外权限不会被这次升级抹掉。
+    """
+    for role in ROLES:
+        row = db.query(SystemRole).filter_by(role_code=role["role_code"]).first()
+        if row is None:
+            continue
+        current = list(row.permission_json or [])
+        if "*" in current:
+            continue
+        missing = [perm for perm in role["permission_json"] if perm not in current]
+        if missing:
+            row.permission_json = current + missing
+            logger.warning("角色 %s 补齐权限：%s", role["role_code"], ", ".join(missing))
 
 
 def _plugin_manifests() -> list[dict[str, Any]]:
@@ -226,6 +243,7 @@ def run_bootstrap() -> None:
                 db, SystemRole, lookup={"role_code": role["role_code"]},
                 defaults={k: v for k, v in role.items() if k != "role_code"},
             )
+        _sync_role_permissions(db)
         _seed_plugins(db)
         _seed_device_and_policy(db)
         _seed_whitelist(db)

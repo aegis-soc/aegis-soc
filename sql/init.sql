@@ -453,3 +453,29 @@ CREATE TABLE IF NOT EXISTS `patrol_setting` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB COMMENT='日志巡检配置（单行）';
 
+-- 人机对话（自然语言查询）：会话 + 消息。payload 存渲染块，dsl 存解析结果
+CREATE TABLE IF NOT EXISTS `chat_session` (
+  `id`            BIGINT      NOT NULL AUTO_INCREMENT,
+  `username`      VARCHAR(64) NOT NULL,
+  `title`         VARCHAR(120) NOT NULL DEFAULT '新对话' COMMENT '首问截断',
+  `message_count` INT         NOT NULL DEFAULT 0,
+  `created_at`    DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at`    DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_chat_session_user` (`username`)
+) ENGINE=InnoDB COMMENT='人机对话会话';
+
+CREATE TABLE IF NOT EXISTS `chat_message` (
+  `id`         BIGINT      NOT NULL AUTO_INCREMENT,
+  `session_id` BIGINT      NOT NULL,
+  `role`       VARCHAR(16) NOT NULL COMMENT 'user / assistant',
+  `content`    TEXT        NOT NULL COMMENT '问题原文或结论正文',
+  `blocks`     JSON        NULL COMMENT '渲染块：[{type,title,...}]',
+  `route`      VARCHAR(16) NULL COMMENT 'db / log / clarify',
+  `dsl`        JSON        NULL COMMENT '当次解析出的 DSL，复盘用',
+  `trace`      JSON        NULL COMMENT '编译后的 SQL / MCP 检索说明',
+  `elapsed_ms` INT         NOT NULL DEFAULT 0,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_chat_msg_session` (`session_id`)
+) ENGINE=InnoDB COMMENT='人机对话消息';

@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### 人机对话（自然语言查询）
+
+- **新增「人机对话」主菜单**：中文提问自动路由——查平台数据（黑名单 / 告警 / 下发 / 设备）走 MySQL，查攻击日志走 Graylog MCP 三流；返回结论 + 明细表 + 柱图 + 编译后的查询
+- **不做 text2SQL**：路由层只产出受控 DSL（`app/services/chat/dsl.py`），由 `compiler_db` / `compiler_log` 翻译成 SQLAlchemy 查询或 MCP 检索；模型/规则拿不到任何表对象，也拼不出字符串 SQL
+- **纯规则、无模型依赖**：六类词表（数据源 / 指标 / 维度 / 时间 / 动作 / 数字）+ 最长优先匹配 + 缺省补全 + 置信度；12 条例句进回归用例，`帮我看看` 这类直接转澄清并给推荐问法
+- **语义目录** `app/services/chat/catalog.py`：数据源 / 维度 / 指标 / 词表 / 排除表集中一处，新增问法大多只加词条；`system_user`、`patrol_setting` 等敏感表被显式排除
+- **护栏**：只生成 `SELECT`（测试断言无 DML 关键字）、过滤值全走绑定参数、`LIMIT ≤ 200`、子查询 ≤ 3、日志时间窗 ≤ 7 天、MySQL 尝试 `MAX_EXECUTION_TIME=10s`、单用户 20 次/分钟、审计 `CHAT_ASK`
+- **结论用模板拼**：事实句 + 阈值判断句（集中度 ≥50%、环比 ±10%），当天未走完的数据不计入环比；日志路径把「已在黑名单」「内网地址」「疑似漏封」分开说，不把内网扫描算成漏封
+- **会话落库** `chat_session` / `chat_message`（`blocks` 存渲染块、`dsl` 存当次解析、`trace` 存编译后的查询）；接口 `POST /chat/ask`、`GET/DELETE /chat/sessions[/{id}]`、`GET /chat/catalog`；权限新增 `chat:ask`（operator / auditor 补齐）
+- **页面**：左侧会话列表、气泡对话、KPI / 表格 / 柱图 / 口径说明四种块、推荐问法 chips、`查看查询详情` 折叠显示路由与 SQL；MySQL 老库执行 `sql/migrate_20261110_chat.sql`
+- **文档** `docs/chat-nlq.md`：DSL 示例、语义目录、护栏、已覆盖问法、扩展步骤与排错顺序
+
 ### 日志巡检 P0（读 Graylog 日志补漏）
 
 - **新增「日志巡检」主菜单**：通过 MCP 只读查询 Graylog 三流日志（IPS / WAF / 零信任），每 5 分钟一轮，用确定性规则找出 Graylog 告警规则漏掉的攻击源；本轮只出报告，不创建黑名单、不下发封禁（`blocked` 恒为 0）
