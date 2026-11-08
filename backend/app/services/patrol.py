@@ -115,7 +115,55 @@ def build_client() -> McpHttpClient:
         settings.patrol_mcp_url,
         token=settings.patrol_mcp_token,
         timeout=settings.patrol_mcp_timeout,
+        auth=settings.patrol_mcp_auth,
     )
+
+
+# 参数角色 → 常见字段名。工具 inputSchema 里出现哪个就用哪个，
+# 这样 Graylog 升级换了参数名也不用改代码。
+ARG_ALIASES: dict[str, tuple[str, ...]] = {
+    "query": ("query", "search_query", "query_string", "q", "search", "filter"),
+    "stream": ("stream_id", "stream_ids", "streams", "stream", "streamId"),
+    "from": ("from", "start", "start_time", "from_time", "since", "timerange_start"),
+    "to": ("to", "end", "end_time", "to_time", "until", "timerange_end"),
+    "limit": ("limit", "size", "per_page", "page_size", "count", "max_results"),
+}
+
+
+def map_arguments(schema: dict[str, Any] | None, *, stream_id: str, query: str,
+                  start: datetime, end: datetime, limit: int) -> dict[str, Any] | None:
+    """按工具 inputSchema 自动拼参数；无法映射时返回 None（由调用方走模板兜底）。
+
+    只放 schema 声明过的字段——多传未知参数会被严格实现直接拒绝。
+    """
+    properties = (schema or {}).get("properties")
+    if not isinstance(properties, dict) or not properties:
+        return None
+
+    values: dict[str, Any] = {
+        "query": query,
+        "stream": stream_id,
+        "from": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "to": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "limit": limit,
+    }
+    arguments: dict[str, Any] = {}
+    for role, aliases in ARG_ALIASES.items():
+        name = next((a for a in aliases if a in properties), None)
+        if name is None:
+            continue
+        value = values[role]
+        if isinstance(value, str) and not value.strip():
+            continue          # 空查询/空流 id 不传，避免服务端当成精确过滤条件
+        declared = properties.get(name) or {}
+        kind = declared.get("type") if isinstance(declared, dict) else None
+        if role == "stream" and kind == "array":
+            arguments[name] = [value]
+        elif role == "limit" and kind == "string":
+            arguments[name] = str(value)
+        else:
+            arguments[name] = value
+    return arguments or None
 
 
 def render_args(template: str, *, stream_id: str, query: str, start: datetime,
@@ -462,12 +510,28 @@ def _fetch_stream(client: McpHttpClient, stream: dict[str, str], start: datetime
     if not stream.get("stream_id") and not stream.get("query"):
         status["skipped"] = "未配置 stream_id / query"
         return [], status
-    arguments = render_args(
-        settings.patrol_mcp_args,
-        stream_id=stream.get("stream_id", ""),
-        query=stream.get("query", ""),
-        start=start, end=end, limit=limit,
-    )
+    template = (settings.patrol_mcp_args or "").strip()
+    if template:
+        arguments = render_args(
+            template,
+            stream_id=stream.get("stream_id", ""),
+            query=stream.get("query", ""),
+            start=start, end=end, limit=limit,
+        )
+    else:
+        # 优先按工具真实 schema 自动映射；拿不到 schema 才退回默认形状
+        arguments = map_arguments(
+            _tool_schema(client, settings.patrol_mcp_tool),
+            stream_id=stream.get("stream_id", ""),
+            query=stream.get("query", ""),
+            start=start, end=end, limit=limit,
+        ) or render_args(
+            '{"stream_id": "${stream_id}", "query": "${query}", "from": "${from}", '
+            '"to": "${to}", "limit": ${limit}}',
+            stream_id=stream.get("stream_id", ""),
+            query=stream.get("query", ""),
+            start=start, end=end, limit=limit,
+        )
     try:
         result = client.call_tool(settings.patrol_mcp_tool, arguments)
     except McpError as exc:
@@ -480,15 +544,83 @@ def _fetch_stream(client: McpHttpClient, stream: dict[str, str], start: datetime
     return records, status
 
 
-def mcp_status() -> dict[str, Any]:
-    """页面「测试连接」：返回服务端信息与工具清单，失败时把原因原样带回。"""
+def _tool_schema(client: McpHttpClient, name: str) -> dict[str, Any]:
+    """取工具 inputSchema；测试替身或旧客户端没有这个方法时返回空（走兜底参数）。"""
+    getter = getattr(client, "tool_schema", None)
+    if not callable(getter):
+        return {}
+    try:
+        return getter(name) or {}
+    except McpError as exc:
+        logger.debug("读取 %s 的 schema 失败：%s", name, exc)
+        return {}
+
+
+# 流标题里出现这些关键词，就建议把它配成对应角色（只做提示，不自动改配置）
+STREAM_HINTS: dict[str, tuple[str, ...]] = {
+    "IPS": ("ips", "入侵", "intrusion", "ids", "threat"),
+    "WAF": ("waf", "web", "应用防火墙", "http"),
+    "ZTNA": ("ztna", "零信任", "zero", "vpn", "sase", "接入"),
+}
+
+
+def discover_streams(client: McpHttpClient | None = None) -> list[dict[str, Any]]:
+    """调 ``list_streams`` 拿 Graylog 的流清单，用于把真实的 stream id 填进配置。"""
+    cli = client or build_client()
+    try:
+        payload = parse_tool_result(cli.call_tool(settings.patrol_mcp_stream_tool, {}))
+    except McpError as exc:
+        logger.warning("读取 Graylog 流清单失败：%s", exc)
+        return []
+    items = extract_records(payload)
+    if not items and isinstance(payload, dict):
+        # Graylog 的 list_streams 常见包法：{"streams": [{id, title, ...}]}
+        nested = payload.get("streams")
+        if isinstance(nested, list):
+            items = [x for x in nested if isinstance(x, dict)]
+        elif payload.get("id") or payload.get("stream_id"):
+            items = [payload]
+    streams: list[dict[str, Any]] = []
+    for item in items:
+        stream_id = str(item.get("id") or item.get("stream_id") or "").strip()
+        if not stream_id:
+            continue
+        title = str(item.get("title") or item.get("name") or stream_id).strip()
+        lowered = title.lower()
+        suggested = next(
+            (role for role, words in STREAM_HINTS.items()
+             if any(w in lowered for w in words)), ""
+        )
+        streams.append({
+            "id": stream_id,
+            "title": title,
+            "description": str(item.get("description") or "")[:120],
+            "suggested": suggested,
+        })
+    return streams
+
+
+def mcp_status(with_streams: bool = True) -> dict[str, Any]:
+    """页面「测试连接」：返回服务端信息、工具清单与流清单，失败时把原因原样带回。"""
     if not settings.patrol_mcp_url:
         return {"configured": False, "error": "未配置 PATROL_MCP_URL"}
+    client = build_client()
     try:
-        info = build_client().describe()
-        return {"configured": True, "error": "", **info}
+        info = client.describe()
     except McpError as exc:
         return {"configured": True, "error": str(exc), "url": mask_url(settings.patrol_mcp_url)}
+    streams = discover_streams(client) if with_streams else []
+    # 用发现的流反查当前配置：提示「配的 stream_id 在 Graylog 里不存在」
+    known = {s["id"] for s in streams}
+    current = [
+        {
+            "name": s["name"], "label": s["label"],
+            "stream_id": s["stream_id"], "query": s["query"],
+            "exists": (s["stream_id"] in known) if (streams and s["stream_id"]) else None,
+        }
+        for s in load_streams()
+    ]
+    return {"configured": True, "error": "", **info, "streams": streams, "configured_streams": current}
 
 
 def run_patrol(db: Session, *, trigger: str = "cron", created_by: str = "system",

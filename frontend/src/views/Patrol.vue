@@ -145,6 +145,64 @@
       </div>
     </div>
 
+    <el-dialog v-model="mcpVisible" title="MCP 连通性" width="720px">
+      <template v-if="mcpInfo">
+        <el-descriptions :column="2" border size="small">
+          <el-descriptions-item label="服务端">{{ mcpInfo.server?.name || '—' }} <span class="text-muted">{{ mcpInfo.server?.version || '' }}</span></el-descriptions-item>
+          <el-descriptions-item label="协议">{{ mcpInfo.protocol_version || '—' }}</el-descriptions-item>
+          <el-descriptions-item label="传输">
+            <el-tag size="small" :type="mcpInfo.transport === 'sse' ? 'warning' : 'success'">{{ mcpInfo.transport || '—' }}</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="鉴权">
+            <el-tag size="small" type="info">{{ mcpInfo.auth || '—' }}</el-tag>
+            <span class="mono text-muted" style="margin-left: 6px">{{ mcpInfo.token_hint || '无 token' }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="地址" :span="2"><span class="mono">{{ mcpInfo.url }}</span></el-descriptions-item>
+        </el-descriptions>
+
+        <div class="detail-block">
+          <div class="detail-label">可用工具（{{ (mcpInfo.tools || []).length }}）</div>
+          <div class="stream-row">
+            <el-tag v-for="t in mcpInfo.tools" :key="t.name" size="small" effect="plain">{{ t.name }}</el-tag>
+          </div>
+        </div>
+
+        <div class="detail-block">
+          <div class="detail-label">Graylog 流清单（点 stream id 复制，填进 PATROL_STREAMS）</div>
+          <el-table :data="mcpInfo.streams || []" size="small" max-height="240">
+            <el-table-column label="Stream ID" width="290">
+              <template #default="{ row }">
+                <span class="mono clickable" :title="'点击复制'" @click="copyStream(row.id)">{{ row.id }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="title" label="标题" />
+            <el-table-column label="建议角色" width="110">
+              <template #default="{ row }">
+                <el-tag v-if="row.suggested" size="small" type="success">{{ row.suggested }}</el-tag>
+                <span v-else class="text-muted">—</span>
+              </template>
+            </el-table-column>
+          </el-table>
+          <div v-if="(mcpInfo.streams || []).length === 0" class="text-muted" style="font-size: 12px">
+            未读到流清单（服务端可能没有 list_streams 工具，或该 token 无权限）
+          </div>
+        </div>
+
+        <div class="detail-block">
+          <div class="detail-label">当前配置</div>
+          <div class="stream-row">
+            <div v-for="c in mcpInfo.configured_streams || []" :key="c.name" class="stream-chip"
+                 :class="{ 'stream-bad': c.exists === false }">
+              <span class="stream-name">{{ c.name }}</span>
+              <span class="mono text-muted">{{ c.stream_id || '未配置' }}</span>
+              <el-tag v-if="c.exists === false" size="small" type="danger">流不存在</el-tag>
+            </div>
+          </div>
+        </div>
+      </template>
+      <template #footer><el-button @click="mcpVisible = false">关闭</el-button></template>
+    </el-dialog>
+
     <el-drawer v-model="detailVisible" title="批次详情" size="620px">
       <template v-if="detail">
         <div class="detail-head">
@@ -202,6 +260,8 @@ const page = ref(1)
 const loading = ref(false)
 const running = ref(false)
 const mcpLoading = ref(false)
+const mcpVisible = ref(false)
+const mcpInfo = ref(null)
 const detailVisible = ref(false)
 const detail = ref(null)
 
@@ -292,9 +352,18 @@ async function testMcp() {
       ElMessage.error(`MCP 不可用：${info.error}`)
       return
     }
-    const names = (info.tools || []).map((t) => t.name).join('、') || '无'
-    ElMessage.success(`MCP 正常（${info.server?.name || 'unknown'} · 协议 ${info.protocol_version}）工具：${names}`)
+    mcpInfo.value = info
+    mcpVisible.value = true
   } finally { mcpLoading.value = false }
+}
+
+async function copyStream(id) {
+  try {
+    await navigator.clipboard.writeText(id)
+    ElMessage.success(`已复制 ${id}`)
+  } catch (e) {
+    ElMessage.warning('浏览器拒绝了剪贴板访问，请手动复制')
+  }
 }
 
 async function openDetail(row) {
@@ -312,6 +381,8 @@ onMounted(async () => {
 .stream-chip { display: flex; align-items: center; gap: 8px; font-size: 12px; background: var(--el-fill-color-light); border-radius: 6px; padding: 5px 10px; }
 .stream-chip.stream-bad { background: var(--el-color-danger-light-9); }
 .stream-name { font-weight: 600; }
+.clickable { cursor: pointer; }
+.clickable:hover { color: var(--el-color-primary); }
 .stream-meta { color: var(--el-text-color-secondary); }
 .stream-err { color: var(--el-color-danger); }
 .rule-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 12px; }

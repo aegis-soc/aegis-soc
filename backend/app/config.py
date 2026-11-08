@@ -58,8 +58,10 @@ class Settings:
     patrol_mode: str                  # dry-run（只出报告）/ assist（待人工确认）/ auto（自动封）
     patrol_mcp_url: str
     patrol_mcp_token: str
+    patrol_mcp_auth: str              # token（Graylog）/ bearer / basic / none / raw
     patrol_mcp_tool: str
-    patrol_mcp_args: str              # JSON 模板，支持 ${stream_id} ${query} ${from} ${to} ${limit}
+    patrol_mcp_stream_tool: str       # 列流的工具名，Graylog 为 list_streams
+    patrol_mcp_args: str              # JSON 模板，留空则按工具 inputSchema 自动映射
     patrol_streams: str               # JSON 数组：[{name, label, stream_id, query}]
     patrol_max_records: int
     patrol_mcp_timeout: float
@@ -103,12 +105,11 @@ class Settings:
             patrol_mode=_get("PATROL_MODE", "dry-run"),
             patrol_mcp_url=_get("PATROL_MCP_URL", ""),
             patrol_mcp_token=_get("PATROL_MCP_TOKEN", ""),
+            patrol_mcp_auth=_get("PATROL_MCP_AUTH", "token"),
             patrol_mcp_tool=_get("PATROL_MCP_TOOL", "search_messages"),
-            patrol_mcp_args=_get(
-                "PATROL_MCP_ARGS",
-                '{"stream_id": "${stream_id}", "query": "${query}", "from": "${from}", '
-                '"to": "${to}", "limit": ${limit}}',
-            ),
+            patrol_mcp_stream_tool=_get("PATROL_MCP_STREAM_TOOL", "list_streams"),
+            # 留空 = 按工具 inputSchema 自动映射参数（推荐）；填了就按模板渲染
+            patrol_mcp_args=_get("PATROL_MCP_ARGS", ""),
             patrol_streams=_get(
                 "PATROL_STREAMS",
                 '[{"name": "IPS", "label": "IPS 入侵防御", "stream_id": "", "query": ""},'

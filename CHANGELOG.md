@@ -8,6 +8,7 @@
 
 - **新增「日志巡检」主菜单**：通过 MCP 只读查询 Graylog 三流日志（IPS / WAF / 零信任），每 5 分钟一轮，用确定性规则找出 Graylog 告警规则漏掉的攻击源；本轮只出报告，不创建黑名单、不下发封禁（`blocked` 恒为 0）
 - **MCP 客户端**（`app/services/mcp_client.py`）：Streamable HTTP + JSON-RPC，握手/会话维持/tools.list/tools.call，兼容 JSON 与 SSE 两种响应，纯标准库无额外依赖
+- **适配 Graylog 原生 MCP**：鉴权用 `Authorization: Token <API_TOKEN>`（`PATROL_MCP_AUTH` 可改 bearer/basic/raw）；POST 被 404/405 拒绝时自动降级为旧版 HTTP+SSE；参数按工具 `inputSchema` 自动映射（只传服务端声明过的字段）；新增 `list_streams` 流发现，页面上可直接看流 id 并核对配置是否指向已不存在的流
 - **L1 规则**：IPS 未阻断、WAF 放行、零信任认证爆破、高频访问、跨流命中、情报命中；字段名按常见候选名自动匹配，换设备只改映射表
 - **窗口游标与重叠**：起点取上一轮终点减重叠秒数，最多回看 6 小时；非公网地址只计数不落候选，单轮候选上限 200
 - **处置预判**：白名单 / 已封 / 24h 重复分别标记为 `skipped_*`，其余为 `would_block`，为 P1 接自动封禁做准备

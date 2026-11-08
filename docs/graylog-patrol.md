@@ -79,19 +79,53 @@ PATROL_ENABLED=true                    # 关闭时定时任务直接跳过
 PATROL_INTERVAL_SECONDS=300            # 5 分钟
 PATROL_OVERLAP_SECONDS=60              # 窗口重叠
 PATROL_MODE=dry-run                    # dry-run / assist / auto（后两者为 P1 预留）
-PATROL_MCP_URL=http://graylog-mcp:9100/mcp
-PATROL_MCP_TOKEN=                      # 可选，Bearer Token
+PATROL_MCP_URL=https://graylog.example.com/api/mcp
+PATROL_MCP_TOKEN=<Graylog 用户 API Token>
+PATROL_MCP_AUTH=token                  # Graylog 用 Token；其它平台可 bearer / basic / raw
 PATROL_MCP_TOOL=search_messages        # MCP 工具名
-PATROL_MCP_ARGS={"stream_id":"${stream_id}","query":"${query}","from":"${from}","to":"${to}","limit":${limit}}
-PATROL_STREAMS=[{"name":"IPS","label":"IPS","stream_id":"<graylog-stream-id>","query":"action:alert"}, ...]
+PATROL_MCP_STREAM_TOOL=list_streams    # 用于在页面上拉取流清单
+PATROL_MCP_ARGS=                       # 留空 = 按工具 inputSchema 自动映射
+PATROL_STREAMS=[{"name":"IPS","label":"IPS","stream_id":"<graylog-stream-id>","query":""}, ...]
 PATROL_MAX_RECORDS=2000
 PATROL_MCP_TIMEOUT=30
 PATROL_REPEAT_HOURS=24
 ```
 
-- `${limit}` 按数字替换，其余占位符按字符串替换，因此模板里的字符串占位符**必须自带引号**；
+- **参数自动映射**：`PATROL_MCP_ARGS` 留空时，客户端先 `tools/list` 读目标工具的 `inputSchema`，
+  再按角色匹配字段名（`query`/`search_query`、`stream_id`/`streams`、`from`/`start`、`to`/`end`、`limit`/`size`），
+  **只传服务端声明过的字段**——多传未知参数会被严格实现直接拒绝。填了模板则按模板渲染：
+  `${limit}` 按数字替换，其余按字符串替换，因此字符串占位符**必须自带引号**；
 - `PATROL_STREAMS` 里既没有 `stream_id` 也没有 `query` 的流会被跳过（计入 `skipped`）；
 - 三流全部没配置时，本轮记为 `skipped`，不会报错。
+
+## 6.1 接真实 Graylog（原生 MCP）
+
+### 服务端三步
+
+1. **建只读账号 + API Token**：Graylog 里新建用户，只给读权限（能看 stream 与 message 即可，
+   不要给删改告警的权限）；在该用户设置里生成 API Token，作为 MCP 鉴权凭证；
+2. **打开开关**：`System → Configurations → MCP` → 勾选 `Enable MCP` 并保存，
+   端点即为 `https://<graylog-host>/api/mcp`；
+3. **记住权限语义**：MCP 调用完全继承该用户 RBAC，每次调用都会写 Graylog 审计日志，可溯源。
+
+### 客户端这边已经适配的形态
+
+| 项 | 实现 |
+|---|---|
+| 鉴权 | `Authorization: Token <token>`（`PATROL_MCP_AUTH=token`）；换平台可改 `bearer`/`basic`/`raw` |
+| 传输 | 先走 Streamable HTTP；若 POST 被 404/405/406 拒绝，自动降级为旧版 HTTP+SSE（GET 拿 `endpoint` → POST，响应从事件流按 `id` 收回） |
+| 工具 | `search_messages` 取日志；`list_streams` 取流清单；其它工具（`list_inputs`/`list_events`/`list_pipelines`）只在连通性弹窗里展示 |
+| 参数 | 默认按 `inputSchema` 自动映射，Graylog 改参数名不用改代码 |
+| 响应 | 兼容 `structuredContent`、`content[].text`（JSON 字符串）、JSON 与 SSE 两种传输体 |
+
+### 页面上的「MCP 连通性」现在能看到什么
+
+- 服务端名称/版本、协议版本、**实际使用的传输方式**、鉴权方式与 token 尾号（便于核对用错 token）；
+- 可用工具清单；
+- **Graylog 流清单**：直接列出 `stream id + 标题`，点 id 复制即可填进 `PATROL_STREAMS`，
+  并按标题关键词（IPS/WAF/零信任）给出建议角色；
+- **当前配置核对**：配置里的 `stream_id` 若在流清单中不存在，会标红提示「流不存在」——
+  这是最容易被忽略的错配（改完 Graylog 流后忘了同步配置，`fetched` 会一直是 0）。
 
 ## 7. 接口与权限
 
@@ -107,9 +141,21 @@ PATROL_REPEAT_HOURS=24
 
 ## 8. 接真实 MCP 时先做这三件事
 
-1. 点页面「MCP 连通性」——能列出工具名才说明握手与会话正常；
-2. 确认 `PATROL_MCP_TOOL` 与 `PATROL_MCP_ARGS` 的参数名一致（不同实现的工具签名不一样）；
-3. 先用一个宽查询跑一次，看 `日志流状态` 里的 `fetched` 是否有数据；为 0 说明 `stream_id` 或 `query` 不对，或返回结构与 `extract_records` 的预期不符。
+1. 点页面「MCP 连通性」——能列出工具名与流清单，才说明握手、鉴权、会话都正常；
+2. 在流清单里对照 `PATROL_STREAMS`：`流不存在` 的红标会直接指出配错的那个；
+3. 先用一个宽查询跑一次，看 `日志流状态` 里的 `fetched` 是否有数据；为 0 说明 `stream_id`/`query` 不对，
+   或返回结构与 `extract_records` 的预期不符（把一条真实返回贴给我即可加别名）。
+
+### 常见报错对照
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| `MCP HTTP 401 Unauthorized` | token 错、或用了 Bearer 前缀 | Graylog 只认 `Authorization: Token xxx`，确认 `PATROL_MCP_AUTH=token` |
+| `MCP HTTP 404` | 端点写错，或 Graylog 没开 MCP 开关 | 端点是 `/api/mcp`（不是 `/api/mcp/` 或 `/mcp`），并确认 `Enable MCP` 已保存 |
+| `MCP HTTP 403` | 该用户没有对应 stream 的读权限 | 给账号加 stream 读权限，或换只读管理员账号 |
+| 传输显示 `sse` | 服务端只实现了旧版 SSE | 正常，客户端已自动降级；如长期使用可留意服务端升级 |
+| `fetched` 一直为 0 | `stream_id` 配错 / 时间窗内确无日志 / 参数名不匹配 | 先点「MCP 连通性」看流清单，再用最长 6 小时的窗口验证 |
+| `MCP 握手失败：protocolVersion` | 服务端协议版本更老 | 客户端已按 `2025-06-18 → 2024-11-05` 依次回退，仍失败请贴报错 |
 
 返回值结构兼容：`messages` / `data` / `records` / `items` / `results` / `hits` / `documents`，
 以及 Graylog 原生 `{"message": {...}}` 包装；也支持 JSON 字符串与 SSE 两种响应体。
