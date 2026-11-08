@@ -202,14 +202,31 @@ def run_inspection() -> dict[str, Any]:
 
 @celery_app.task(name="aegis.run_patrol")
 def run_patrol_task() -> dict[str, Any]:
-    """定时日志巡检（默认每 5 分钟）：只读 Graylog 日志找漏封，P0 阶段不下发封禁。"""
-    from app.services.patrol import run_patrol as _run
+    """日志巡检：Beat 每分钟唤醒一次，是否真跑由页面配置决定（开关 + 间隔）。
 
-    if not settings.patrol_enabled:
-        return {"skipped": "PATROL_ENABLED=false"}
+    这样在界面上把间隔从 300s 改成 600s 立刻生效，无需重启 Beat；
+    没配数据库配置时回落到 ``PATROL_ENABLED`` / ``PATROL_INTERVAL_SECONDS``。
+    """
+    from app.database import utcnow
+    from app.models import PatrolRun
+    from app.services.patrol import load_config, run_patrol as _run
+
     db = SessionLocal()
     try:
-        run = _run(db, trigger="cron", created_by="celery")
+        cfg = load_config(db)
+        if not cfg.enabled:
+            return {"skipped": "定时巡检未启用（日志巡检 → MCP 配置）"}
+        last = (
+            db.query(PatrolRun)
+            .order_by(PatrolRun.created_at.desc(), PatrolRun.id.desc())
+            .first()
+        )
+        if last is not None and last.created_at is not None:
+            elapsed = (utcnow() - last.created_at).total_seconds()
+            # 留 5s 余量，避免恰好差一两秒被跳过而导致实际间隔翻倍
+            if elapsed < max(cfg.interval - 5, 30):
+                return {"skipped": f"距上轮 {int(elapsed)}s，未到间隔 {cfg.interval}s"}
+        run = _run(db, trigger="cron", created_by="celery", cfg=cfg)
         return {
             "run_id": run.id, "status": run.status, "fetched": run.fetched,
             "candidates": run.candidate_count, "would_block": run.would_block,

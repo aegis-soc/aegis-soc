@@ -5,8 +5,6 @@ from typing import Any
 
 from celery.schedules import crontab
 
-from app.config import settings
-
 
 def build_beat_schedule() -> dict[str, Any]:
     return {
@@ -26,11 +24,11 @@ def build_beat_schedule() -> dict[str, Any]:
             "schedule": crontab(minute=30, hour=8),
             "options": {"queue": "aegis"},
         },
-        # 日志巡检：默认每 5 分钟读一次 Graylog 三流日志找漏封；
-        # PATROL_ENABLED=false 时任务直接跳过（保留调度不影响其他任务）
+        # 日志巡检：每分钟唤醒一次，真正的间隔由页面配置（默认 300s）决定，
+        # 任务内部做「距上轮是否够间隔」的判断——改配置无需重启 Beat
         "graylog-patrol": {
             "task": "aegis.run_patrol",
-            "schedule": float(settings.patrol_interval_seconds),
+            "schedule": 60.0,
             "options": {"queue": "aegis"},
         },
     }

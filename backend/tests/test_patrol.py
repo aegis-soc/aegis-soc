@@ -220,7 +220,7 @@ def test_repeat_ip_marked_on_second_run(client, monkeypatch):
 def test_api_run_latest_and_list(client, auth_headers, monkeypatch):
     patch_settings(monkeypatch, patrol_streams=THREE_STREAMS)
     payloads = {"waf-1": [graylog_message("a1", "45.33.20.61", action="pass")]}
-    monkeypatch.setattr(patrol, "build_client", lambda: FakeClient(payloads))
+    monkeypatch.setattr(patrol, "build_client", lambda *a, **k: FakeClient(payloads))
 
     run = client.post("/api/v1/patrols/run", headers=auth_headers)
     assert run.status_code == 200, run.text

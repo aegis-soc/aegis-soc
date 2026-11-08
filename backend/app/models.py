@@ -443,6 +443,36 @@ class InspectionReport(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
 
+class PatrolSetting(Base):
+    """Graylog MCP 配置（单行，id=1）：页面可改，环境变量只做首次默认值。
+
+    为什么落库而不是只读 env：换 Graylog 地址、轮换 token、把某条流换成新的
+    stream id 都属日常运维，改一次重启一次后端不现实；同时 token 存库后接口
+    只回掩码，避免在页面上被二次泄露。
+    """
+
+    __tablename__ = "patrol_setting"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    enabled: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    mcp_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    mcp_token: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    mcp_auth: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    mcp_tool: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    mcp_stream_tool: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    mcp_args: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # [{name,label,stream_id,query}]：三流映射随配置一起存，避免两处维护
+    streams: Mapped[Any | None] = mapped_column(JSON, nullable=True)
+    interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
+    overlap_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    max_records: Mapped[int] = mapped_column(Integer, nullable=False, default=2000)
+    timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    repeat_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=24)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False, default="dry-run")
+    updated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
 class PatrolRun(Base):
     """日志巡检批次：每 5 分钟一轮，记录窗口、抓取量、候选与结论。
 

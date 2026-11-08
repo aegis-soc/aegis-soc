@@ -10,13 +10,19 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.common import BizError, client_ip, ok, paginate
-from app.config import settings
 from app.database import get_db
 from app.deps import require_perms
 from app.models import PatrolCandidate, PatrolRun, SystemUser
-from app.schemas import PatrolCandidateOut, PatrolDetailOut, PatrolRunOut
+from app.schemas import (
+    PatrolCandidateOut,
+    PatrolConfigIn,
+    PatrolDetailOut,
+    PatrolProbeIn,
+    PatrolRunOut,
+)
+from app.services import patrol_settings
 from app.services.audit import write_audit
-from app.services.patrol import mcp_status, run_patrol
+from app.services.patrol import load_config, mcp_probe, mcp_status, run_patrol
 
 router = APIRouter(tags=["日志巡检"])
 
@@ -61,12 +67,62 @@ def run_now(
     return ok(_detail(db, run))
 
 
-@router.get("/patrols/mcp/status")
-def check_mcp(
+@router.get("/patrols/config")
+def get_patrol_config(
+    db: Session = Depends(get_db),
     _=Depends(require_perms("inspection:read")),
 ):
-    """MCP 连通性自检：返回服务端信息、协议版本与可用工具列表。"""
-    return ok(mcp_status())
+    """当前生效配置（库优先、env 兜底）；token 只回掩码与尾号。"""
+    return ok(patrol_settings.public(load_config(db)))
+
+
+@router.put("/patrols/config")
+def update_patrol_config(
+    payload: PatrolConfigIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: SystemUser = Depends(require_perms("system:*")),
+):
+    """保存 Graylog MCP 配置：地址、token、三流映射与巡检节奏。
+
+    仅管理员可改（``system:*``）——token 与日志查询目标都属敏感配置；
+    留空的 token 表示不修改，避免改地址顺手把凭证清空。
+    """
+    data = payload.model_dump(exclude_unset=True)
+    cfg = patrol_settings.save(db, data, operator=user.username)
+    write_audit(
+        db, "PATROL_CONFIG_UPDATE", operator=user.username, role_code=user.role_code,
+        target_type="patrol_config", target_id=1,
+        content={
+            "mcp_url": cfg.url, "auth": cfg.auth, "enabled": cfg.enabled,
+            "mode": cfg.mode, "interval_seconds": cfg.interval,
+            "streams": cfg.streams,
+            "token_changed": bool(data.get("mcp_token") or data.get("clear_token")),
+        },
+        client_ip=client_ip(request),
+    )
+    db.commit()
+    return ok(patrol_settings.public(cfg))
+
+
+@router.post("/patrols/mcp/test")
+def probe_mcp(
+    payload: PatrolProbeIn,
+    db: Session = Depends(get_db),
+    _=Depends(require_perms("system:*")),
+):
+    """保存前试连：用表单草稿覆盖已保存配置，不落库、不产生巡检记录。"""
+    draft = payload.model_dump(exclude_unset=True, exclude_none=True)
+    return ok(mcp_probe(draft, db))
+
+
+@router.get("/patrols/mcp/status")
+def check_mcp(
+    db: Session = Depends(get_db),
+    _=Depends(require_perms("inspection:read")),
+):
+    """MCP 连通性自检：返回服务端信息、协议版本、工具与流清单。"""
+    return ok(mcp_status(db))
 
 
 @router.get("/patrols/latest")
@@ -100,12 +156,14 @@ def list_runs(
         stmt = stmt.where(PatrolRun.status == status)
     stmt = stmt.order_by(PatrolRun.created_at.desc(), PatrolRun.id.desc())
     rows, total = paginate(stmt, db, page, page_size)
+    cfg = load_config(db)
     return ok({
         "items": [PatrolRunOut.model_validate(r).model_dump(mode="json") for r in rows],
         "total": total, "page": page, "page_size": page_size,
-        "mode": settings.patrol_mode,
-        "enabled": settings.patrol_enabled,
-        "interval_seconds": settings.patrol_interval_seconds,
+        "mode": cfg.mode,
+        "enabled": cfg.enabled,
+        "interval_seconds": cfg.interval,
+        "config_source": cfg.source,
     })
 
 

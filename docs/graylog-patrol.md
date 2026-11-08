@@ -127,6 +127,30 @@ PATROL_REPEAT_HOURS=24
 - **当前配置核对**：配置里的 `stream_id` 若在流清单中不存在，会标红提示「流不存在」——
   这是最容易被忽略的错配（改完 Graylog 流后忘了同步配置，`fetched` 会一直是 0）。
 
+## 6.2 页面配置（推荐，无需改环境变量）
+
+页面右上 **「MCP 配置」** 打开配置抽屉，可维护：
+
+| 项 | 说明 |
+|---|---|
+| 定时巡检开关 | 关掉后 Beat 仍每分钟唤醒，但任务直接跳过；手动「立即巡检」不受影响 |
+| MCP 地址 | `https://<graylog-host>/api/mcp`；必须 http/https 开头 |
+| API Token | 输入框只写不读：已保存时显示 `已保存 abcd***7890`，**留空表示不修改**，勾选「清除」才清空 |
+| 鉴权方式 | 默认 `token`（Graylog），可切 `bearer` / `basic` / `raw` / 不鉴权 |
+| 三流映射 | 每行一个角色（IPS/WAF/ZTNA）；点「从 Graylog 拉取流清单」后可下拉选，也可粘贴 stream id；选中的 id 不在清单里会提示 |
+| 巡检节奏 | 间隔（60~3600s）、窗口重叠、重复标记小时数、单轮条数上限 |
+| 高级 | 检索/流清单工具名、参数模板、超时 |
+
+保存前可点 **「测试连接」**：用当前表单草稿（不落库）真实握手一次，返回服务端名称、传输方式、工具清单，并把流清单灌进下拉框。
+
+**生效方式**：配置存 `patrol_setting` 表（单行），下一轮巡检即读到，不需要重启后端或 Beat。
+Beat 固定每分钟唤醒一次，真正的间隔由任务内部按「距上轮时间」判断，所以改间隔立刻生效。
+
+**优先级**：数据库配置 > 环境变量。没保存过页面配置时，全部取 `.env`（页面会提示「当前值来自环境变量」）。
+
+**权限**：查看配置需 `inspection:read`；**保存与试连仅管理员**（`system:*`）——token 与日志查询目标都属敏感配置，
+每次保存都会写审计（`PATROL_CONFIG_UPDATE`，记录地址/鉴权/开关/三流，绝不记 token 明文）。
+
 ## 7. 接口与权限
 
 | 方法 | 路径 | 权限 | 说明 |
@@ -135,7 +159,10 @@ PATROL_REPEAT_HOURS=24
 | GET | `/api/v1/patrols/latest` | `inspection:read` | 最近一轮含明细 |
 | GET | `/api/v1/patrols` | `inspection:read` | 历史批次分页 |
 | GET | `/api/v1/patrols/{id}` | `inspection:read` | 指定批次明细 |
-| GET | `/api/v1/patrols/mcp/status` | `inspection:read` | MCP 连通性与工具清单 |
+| GET | `/api/v1/patrols/mcp/status` | `inspection:read` | MCP 连通性、工具与流清单 |
+| GET | `/api/v1/patrols/config` | `inspection:read` | 当前生效配置（token 只回掩码） |
+| PUT | `/api/v1/patrols/config` | `system:*` | 保存配置（地址/token/三流/节奏），写审计 |
+| POST | `/api/v1/patrols/mcp/test` | `system:*` | 保存前试连（草稿不落库） |
 
 页面入口：左侧菜单 **日志巡检**（`/patrol`）。
 

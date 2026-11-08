@@ -282,7 +282,7 @@ def test_discover_streams_normalizes_and_suggests(monkeypatch):
         {"id": "bbb222", "title": "WAF access log"},
         {"id": "ccc333", "title": "零信任接入日志"},
     ]})
-    monkeypatch.setattr(patrol, "build_client", lambda: stub)
+    monkeypatch.setattr(patrol, "build_client", lambda *a, **k: stub)
 
     streams = patrol.discover_streams()
 
@@ -297,5 +297,5 @@ def test_discover_streams_degrades_on_mcp_error(monkeypatch):
             from app.services.mcp_client import McpError
             raise McpError("connect refused")
 
-    monkeypatch.setattr(patrol, "build_client", lambda: _Boom())
+    monkeypatch.setattr(patrol, "build_client", lambda *a, **k: _Boom())
     assert patrol.discover_streams() == []

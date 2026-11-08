@@ -424,3 +424,45 @@ class PatrolRunOut(_Out):
 
 class PatrolDetailOut(PatrolRunOut):
     candidates: list[PatrolCandidateOut] = []
+
+
+# ---------------- 日志巡检配置 ----------------
+class PatrolStreamConfig(BaseModel):
+    name: str = Field(min_length=1, max_length=16)
+    label: str = Field(default="", max_length=64)
+    stream_id: str = Field(default="", max_length=64)
+    query: str = Field(default="", max_length=255)
+
+
+class PatrolConfigIn(BaseModel):
+    """页面保存的配置；字段都可选，未传的保持原值。
+
+    ``mcp_token`` 留空表示不修改，``clear_token=True`` 才清空。
+    """
+
+    enabled: bool | None = None
+    mcp_url: str | None = Field(default=None, max_length=255)
+    mcp_token: str | None = Field(default=None, max_length=255)
+    clear_token: bool | None = None
+    mcp_auth: str | None = Field(default=None, max_length=16)
+    mcp_tool: str | None = Field(default=None, max_length=64)
+    mcp_stream_tool: str | None = Field(default=None, max_length=64)
+    mcp_args: str | None = None
+    streams: list[PatrolStreamConfig] | None = None
+    interval_seconds: int | None = Field(default=None, ge=60, le=3600)
+    overlap_seconds: int | None = Field(default=None, ge=0, le=600)
+    max_records: int | None = Field(default=None, ge=1, le=10000)
+    timeout_seconds: int | None = Field(default=None, ge=5, le=120)
+    repeat_hours: int | None = Field(default=None, ge=1, le=720)
+    mode: str | None = Field(default=None, max_length=16)
+
+
+class PatrolProbeIn(BaseModel):
+    """保存前试连：只带要覆盖的字段，不落库。"""
+
+    mcp_url: str | None = None
+    mcp_token: str | None = None
+    mcp_auth: str | None = None
+    mcp_tool: str | None = None
+    mcp_stream_tool: str | None = None
+    streams: list[PatrolStreamConfig] | None = None

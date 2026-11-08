@@ -9,7 +9,8 @@
         </p>
       </div>
       <div style="display: flex; gap: 8px">
-        <el-button :icon="Connection" :loading="mcpLoading" @click="testMcp">MCP 连通性</el-button>
+        <el-button :icon="Setting" @click="openConfig">MCP 配置</el-button>
+        <el-button :icon="Connection" :loading="mcpLoading" @click="testMcp">连通性</el-button>
         <el-button type="primary" :icon="VideoPlay" :loading="running" @click="doRun">立即巡检</el-button>
       </div>
     </div>
@@ -17,7 +18,7 @@
     <el-alert
       v-if="!run" type="info" show-icon :closable="false"
       title="还没有巡检记录"
-      description="配置 PATROL_MCP_URL 与 PATROL_STREAMS 后，点「立即巡检」跑第一轮；定时任务默认每 5 分钟一次（需 PATROL_ENABLED=true）。"
+      description="还没有配置 Graylog 接入：点右上「MCP 配置」填地址与 API Token，再从流清单里挑三条流的 stream id；保存后点「立即巡检」跑第一轮。"
       style="margin-bottom: 16px"
     />
     <el-alert
@@ -203,6 +204,133 @@
       <template #footer><el-button @click="mcpVisible = false">关闭</el-button></template>
     </el-dialog>
 
+    <el-drawer v-model="cfgVisible" title="Graylog MCP 配置" size="800px" :close-on-click-modal="false">
+      <el-form v-loading="cfgLoading" :model="form" label-width="118px" label-position="right">
+        <el-form-item label="定时巡检">
+          <el-switch v-model="form.enabled" />
+          <span class="form-hint" style="margin-left: 10px">
+            关闭后 Beat 仍每分钟唤醒，但任务会直接跳过；手动「立即巡检」不受影响
+          </span>
+        </el-form-item>
+
+        <el-form-item label="MCP 地址" required>
+          <el-input v-model="form.mcp_url" clearable placeholder="https://graylog.example.com/api/mcp" />
+          <div class="form-hint">
+            Graylog：<b>System → Configurations → MCP</b> 打开 Enable MCP 后，端点固定为 <span class="mono">/api/mcp</span>
+          </div>
+        </el-form-item>
+
+        <el-form-item label="API Token">
+          <el-input v-model="form.mcp_token" type="password" show-password clearable
+                    :placeholder="cfgTokenSet ? `已保存 ${cfgTokenHint}，留空表示不修改` : '粘贴 Graylog 用户设置里生成的 API Token'" />
+          <el-checkbox v-if="cfgTokenSet" v-model="form.clear_token" style="margin-top: 4px">清除已保存的 Token</el-checkbox>
+          <div class="form-hint">
+            建议用<b>只读账号</b>：MCP 完全继承该用户 RBAC，且每次调用都会写 Graylog 审计日志，可溯源
+          </div>
+        </el-form-item>
+
+        <el-form-item label="鉴权方式">
+          <el-select v-model="form.mcp_auth" style="width: 240px">
+            <el-option value="token" label="Token（Graylog 默认，Authorization: Token xxx）" />
+            <el-option value="bearer" label="Bearer" />
+            <el-option value="basic" label="Basic" />
+            <el-option value="raw" label="Raw（原样放进 Authorization）" />
+            <el-option value="none" label="不鉴权" />
+          </el-select>
+        </el-form-item>
+
+        <el-divider content-position="left">三流映射</el-divider>
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px">
+          <el-button size="small" :loading="streamLoading" @click="fetchStreams">从 Graylog 拉取流清单</el-button>
+          <span class="form-hint" style="margin: 0">
+            拉取后可直接下拉选择；也可以粘贴 stream id（Graylog 的 Streams 页面里能看到）
+          </span>
+        </div>
+        <el-table :data="form.streams" size="small" border>
+          <el-table-column label="角色" width="86">
+            <template #default="{ row }"><el-tag size="small" effect="plain">{{ row.name }}</el-tag></template>
+          </el-table-column>
+          <el-table-column label="Stream ID" width="330">
+            <template #default="{ row }">
+              <el-select v-model="row.stream_id" filterable allow-create clearable size="small"
+                         placeholder="选择或粘贴 stream id" style="width: 100%">
+                <el-option v-for="opt in streamOptions" :key="opt.id" :value="opt.id"
+                           :label="`${opt.title}（${opt.id}）`" />
+              </el-select>
+              <div v-if="streamTitle(row.stream_id)" class="stream-title">{{ streamTitle(row.stream_id) }}</div>
+              <div v-else-if="row.stream_id" class="stream-title warn">该 stream id 不在已拉取的清单里</div>
+            </template>
+          </el-table-column>
+          <el-table-column label="附加查询（可选）">
+            <template #default="{ row }">
+              <el-input v-model="row.query" size="small" placeholder="如 action:alert，留空表示不限" />
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <el-divider content-position="left">巡检节奏</el-divider>
+        <el-row :gutter="12">
+          <el-col :span="12">
+            <el-form-item label="巡检间隔">
+              <el-input-number v-model="form.interval_seconds" :min="60" :max="3600" :step="60" controls-position="right" />
+              <span class="unit">秒</span>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="窗口重叠">
+              <el-input-number v-model="form.overlap_seconds" :min="0" :max="600" :step="10" controls-position="right" />
+              <span class="unit">秒</span>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="重复标记">
+              <el-input-number v-model="form.repeat_hours" :min="1" :max="720" controls-position="right" />
+              <span class="unit">小时</span>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="单轮上限">
+              <el-input-number v-model="form.max_records" :min="100" :max="10000" :step="100" controls-position="right" />
+              <span class="unit">条</span>
+            </el-form-item>
+          </el-col>
+        </el-row>
+
+        <el-collapse style="margin-top: 4px">
+          <el-collapse-item title="高级（工具名 / 参数模板 / 超时）" name="adv">
+            <el-form-item label="检索工具名">
+              <el-input v-model="form.mcp_tool" placeholder="search_messages" />
+            </el-form-item>
+            <el-form-item label="流清单工具名">
+              <el-input v-model="form.mcp_stream_tool" placeholder="list_streams" />
+            </el-form-item>
+            <el-form-item label="参数模板">
+              <el-input v-model="form.mcp_args" type="textarea" :rows="2"
+                        placeholder='留空 = 按工具 inputSchema 自动映射；如需覆盖可写 {"query":"${query}","stream_id":"${stream_id}","from":"${from}","to":"${to}","limit":${limit}}' />
+              <div class="form-hint">只有服务端参数名和自动映射都对不上时才需要填</div>
+            </el-form-item>
+            <el-form-item label="超时">
+              <el-input-number v-model="form.timeout_seconds" :min="5" :max="120" controls-position="right" />
+              <span class="unit">秒</span>
+            </el-form-item>
+          </el-collapse-item>
+        </el-collapse>
+
+        <div v-if="cfgSource === 'env'" class="form-hint" style="margin-top: 12px">
+          当前值来自环境变量（尚未保存过页面配置）；保存后即以页面配置为准
+        </div>
+        <div v-else-if="cfgUpdatedBy" class="form-hint" style="margin-top: 12px">
+          上次修改：{{ cfgUpdatedBy }}<span v-if="cfgUpdatedAt"> · {{ fmtTime(cfgUpdatedAt) }}</span>
+        </div>
+      </el-form>
+
+      <template #footer>
+        <el-button :loading="cfgProbing" @click="probe">测试连接</el-button>
+        <el-button @click="cfgVisible = false">取消</el-button>
+        <el-button type="primary" :loading="cfgSaving" @click="saveConfig">保存</el-button>
+      </template>
+    </el-drawer>
+
     <el-drawer v-model="detailVisible" title="批次详情" size="620px">
       <template v-if="detail">
         <div class="detail-head">
@@ -248,9 +376,9 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Connection, VideoPlay, Warning } from '@element-plus/icons-vue'
+import { Connection, Setting, VideoPlay, Warning } from '@element-plus/icons-vue'
 import { api } from '../api'
 
 const run = ref(null)
@@ -262,6 +390,35 @@ const running = ref(false)
 const mcpLoading = ref(false)
 const mcpVisible = ref(false)
 const mcpInfo = ref(null)
+
+// ---- Graylog MCP 配置 ----
+const cfgVisible = ref(false)
+const cfgLoading = ref(false)
+const cfgSaving = ref(false)
+const cfgProbing = ref(false)
+const cfgTokenSet = ref(false)
+const cfgTokenHint = ref('')
+const cfgSource = ref('env')
+const cfgUpdatedBy = ref('')
+const cfgUpdatedAt = ref('')
+const streamLoading = ref(false)
+const streamOptions = ref([])
+const form = reactive({
+  enabled: false,
+  mcp_url: '',
+  mcp_token: '',
+  clear_token: false,
+  mcp_auth: 'token',
+  mcp_tool: 'search_messages',
+  mcp_stream_tool: 'list_streams',
+  mcp_args: '',
+  streams: [],
+  interval_seconds: 300,
+  overlap_seconds: 60,
+  repeat_hours: 24,
+  max_records: 2000,
+  timeout_seconds: 30,
+})
 const detailVisible = ref(false)
 const detail = ref(null)
 
@@ -340,6 +497,109 @@ async function doRun() {
   } finally { running.value = false }
 }
 
+function streamTitle(id) {
+  if (!id) return ''
+  return (streamOptions.value.find((s) => s.id === id) || {}).title || ''
+}
+
+function mergeStreamOptions(streams) {
+  if (!Array.isArray(streams) || !streams.length) return
+  const known = new Set(streamOptions.value.map((s) => s.id))
+  streamOptions.value = [
+    ...streamOptions.value,
+    ...streams.filter((s) => s && s.id && !known.has(s.id)),
+  ]
+}
+
+async function openConfig() {
+  cfgVisible.value = true
+  cfgLoading.value = true
+  try {
+    const cfg = await api.patrolConfig()
+    Object.assign(form, {
+      enabled: cfg.enabled,
+      mcp_url: cfg.mcp_url || '',
+      mcp_token: '',
+      clear_token: false,
+      mcp_auth: cfg.mcp_auth || 'token',
+      mcp_tool: cfg.mcp_tool || 'search_messages',
+      mcp_stream_tool: cfg.mcp_stream_tool || 'list_streams',
+      mcp_args: cfg.mcp_args || '',
+      streams: (cfg.streams || []).map((s) => ({ ...s })),
+      interval_seconds: cfg.interval_seconds || 300,
+      overlap_seconds: cfg.overlap_seconds ?? 60,
+      repeat_hours: cfg.repeat_hours || 24,
+      max_records: cfg.max_records || 2000,
+      timeout_seconds: Math.round(cfg.timeout_seconds || 30),
+    })
+    cfgTokenSet.value = !!cfg.token_set
+    cfgTokenHint.value = cfg.token_hint || ''
+    cfgSource.value = cfg.source || 'env'
+    cfgUpdatedBy.value = cfg.updated_by || ''
+    cfgUpdatedAt.value = cfg.updated_at || ''
+  } catch (e) { /* 拦截器已提示 */ } finally { cfgLoading.value = false }
+}
+
+function draftPayload() {
+  const payload = {
+    enabled: form.enabled,
+    mcp_url: form.mcp_url,
+    mcp_auth: form.mcp_auth,
+    mcp_tool: form.mcp_tool,
+    mcp_stream_tool: form.mcp_stream_tool,
+    mcp_args: form.mcp_args,
+    streams: form.streams,
+    interval_seconds: form.interval_seconds,
+    overlap_seconds: form.overlap_seconds,
+    repeat_hours: form.repeat_hours,
+    max_records: form.max_records,
+    timeout_seconds: form.timeout_seconds,
+  }
+  if (form.mcp_token) payload.mcp_token = form.mcp_token
+  if (form.clear_token) payload.clear_token = true
+  return payload
+}
+
+async function fetchStreams() {
+  if (!form.mcp_url) { ElMessage.warning('请先填写 MCP 地址'); return }
+  streamLoading.value = true
+  try {
+    const info = await api.patrolMcpTest({
+      mcp_url: form.mcp_url,
+      mcp_auth: form.mcp_auth,
+      mcp_token: form.mcp_token || undefined,
+      mcp_tool: form.mcp_tool,
+      mcp_stream_tool: form.mcp_stream_tool,
+      streams: form.streams,
+    })
+    if (info.error) { ElMessage.error(`读取流清单失败：${info.error}`); return }
+    mergeStreamOptions(info.streams)
+    ElMessage.success(`已拉取 ${info.streams?.length || 0} 条流`)
+  } catch (e) { /* 拦截器已提示 */ } finally { streamLoading.value = false }
+}
+
+async function probe() {
+  cfgProbing.value = true
+  try {
+    const info = await api.patrolMcpTest(draftPayload())
+    if (info.error) { ElMessage.error(`连接失败：${info.error}`); return }
+    mergeStreamOptions(info.streams)
+    const tools = (info.tools || []).map((t) => t.name).join('、') || '无'
+    ElMessage.success(`连接正常（${info.server?.name || 'unknown'} · ${info.transport}）工具：${tools}`)
+  } catch (e) { /* 拦截器已提示 */ } finally { cfgProbing.value = false }
+}
+
+async function saveConfig() {
+  if (!form.mcp_url) { ElMessage.warning('请填写 MCP 地址'); return }
+  cfgSaving.value = true
+  try {
+    await api.patrolConfigSave(draftPayload())
+    ElMessage.success('配置已保存，下一轮巡检即生效')
+    cfgVisible.value = false
+    await Promise.all([loadLatest(), loadRuns()])
+  } catch (e) { /* 拦截器已提示 */ } finally { cfgSaving.value = false }
+}
+
 async function testMcp() {
   mcpLoading.value = true
   try {
@@ -381,6 +641,10 @@ onMounted(async () => {
 .stream-chip { display: flex; align-items: center; gap: 8px; font-size: 12px; background: var(--el-fill-color-light); border-radius: 6px; padding: 5px 10px; }
 .stream-chip.stream-bad { background: var(--el-color-danger-light-9); }
 .stream-name { font-weight: 600; }
+.form-hint { font-size: 12px; color: var(--el-text-color-secondary); line-height: 1.6; }
+.stream-title { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 2px; }
+.stream-title.warn { color: var(--el-color-warning); }
+.unit { margin-left: 6px; font-size: 12px; color: var(--el-text-color-secondary); }
 .clickable { cursor: pointer; }
 .clickable:hover { color: var(--el-color-primary); }
 .stream-meta { color: var(--el-text-color-secondary); }

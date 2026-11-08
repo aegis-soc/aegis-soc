@@ -30,7 +30,9 @@ from app.config import settings
 from app.database import utcnow
 from app.engines.validation import check_whitelist, validate_ioc
 from app.models import IocIndicator, PatrolCandidate, PatrolRun
+from app.services import patrol_settings
 from app.services.mcp_client import McpError, McpHttpClient, mask_url, parse_tool_result
+from app.services.patrol_settings import PatrolConfig
 
 logger = logging.getLogger("aegis")
 
@@ -88,34 +90,28 @@ DEFAULT_STREAMS: list[dict[str, str]] = [
 
 
 # ---------------------------------------------------------------- 配置解析
-def load_streams() -> list[dict[str, str]]:
-    """读 PATROL_STREAMS；坏配置不要让巡检整体挂掉，退回内置三流。"""
-    try:
-        raw = json.loads(settings.patrol_streams or "[]")
-    except json.JSONDecodeError:
-        logger.warning("PATROL_STREAMS 不是合法 JSON，使用内置三流配置")
-        return [dict(s) for s in DEFAULT_STREAMS]
-    if not isinstance(raw, list) or not raw:
-        return [dict(s) for s in DEFAULT_STREAMS]
-    streams: list[dict[str, str]] = []
-    for item in raw:
-        if not isinstance(item, dict) or not item.get("name"):
-            continue
-        streams.append({
-            "name": str(item.get("name")).upper(),
-            "label": str(item.get("label") or item.get("name")),
-            "stream_id": str(item.get("stream_id") or ""),
-            "query": str(item.get("query") or ""),
-        })
-    return streams or [dict(s) for s in DEFAULT_STREAMS]
+def load_config(db=None) -> PatrolConfig:
+    """有效配置：库里的页面配置优先，环境变量兜底。
+
+    ``base=settings`` 而不是让 patrol_settings 自己取默认配置，是为了让测试里
+    ``monkeypatch.setattr(patrol, "settings", replace(...))`` 依然生效。
+    """
+    return patrol_settings.load(db, base=settings)
 
 
-def build_client() -> McpHttpClient:
+def load_streams(cfg: PatrolConfig | None = None, db=None) -> list[dict[str, str]]:
+    """三流配置；坏配置不要让巡检整体挂掉，退回内置三流。"""
+    cfg = cfg or load_config(db)
+    return [dict(s) for s in cfg.streams] or [dict(s) for s in DEFAULT_STREAMS]
+
+
+def build_client(cfg: PatrolConfig | None = None, db=None) -> McpHttpClient:
+    cfg = cfg or load_config(db)
     return McpHttpClient(
-        settings.patrol_mcp_url,
-        token=settings.patrol_mcp_token,
-        timeout=settings.patrol_mcp_timeout,
-        auth=settings.patrol_mcp_auth,
+        cfg.url,
+        token=cfg.token,
+        timeout=cfg.timeout,
+        auth=cfg.auth,
     )
 
 
@@ -436,12 +432,14 @@ def build_candidates(items: list[dict[str, Any]], window_end: datetime) -> tuple
     return candidates[:MAX_CANDIDATES], ignored_non_public
 
 
-def apply_gates(db: Session, candidates: list[Candidate], now: datetime) -> None:
+def apply_gates(db: Session, candidates: list[Candidate], now: datetime,
+                cfg: PatrolConfig | None = None) -> None:
     """闸门预判：把"如果 auto 会怎样"算清楚，P0 只写报告不执行。
 
-    顺序即优先级：白名单 > 已封 > 24h 内重复 > 可封。
+    顺序即优先级：白名单 > 已封 > 重复标记 > 可封。
     """
-    repeat_since = now - timedelta(hours=max(settings.patrol_repeat_hours, 1))
+    cfg = cfg or load_config(db)
+    repeat_since = now - timedelta(hours=max(cfg.repeat_hours, 1))
     for candidate in candidates:
         in_whitelist, matched = check_whitelist(db, candidate.ip)
         if in_whitelist:
@@ -472,17 +470,17 @@ def apply_gates(db: Session, candidates: list[Candidate], now: datetime) -> None
         )
         if repeated is not None:
             candidate.decision = "skipped_repeat"
-            candidate.decision_reason = f"{settings.patrol_repeat_hours}h 内已被巡检标记过"
+            candidate.decision_reason = f"{cfg.repeat_hours}h 内已被巡检标记过"
             continue
         candidate.decision = "would_block"
         candidate.decision_reason = "通过全部闸门，dry-run 未下发"
 
 
 # ---------------------------------------------------------------- 主入口
-def _window(db: Session, now: datetime) -> tuple[datetime, datetime]:
+def _window(db: Session, now: datetime, cfg: PatrolConfig) -> tuple[datetime, datetime]:
     """窗口起点 = 上一轮成功巡检的终点 - 重叠秒数；首轮按间隔回看。"""
-    interval = max(settings.patrol_interval_seconds, 30)
-    overlap = max(settings.patrol_overlap_seconds, 0)
+    interval = max(cfg.interval, 30)
+    overlap = max(cfg.overlap, 0)
     last = (
         db.query(PatrolRun)
         .filter(PatrolRun.status.in_(("ok", "degraded")))
@@ -501,7 +499,8 @@ def _window(db: Session, now: datetime) -> tuple[datetime, datetime]:
 
 
 def _fetch_stream(client: McpHttpClient, stream: dict[str, str], start: datetime,
-                  end: datetime, limit: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+                  end: datetime, limit: int,
+                  cfg: PatrolConfig | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     status: dict[str, Any] = {
         "name": stream["name"], "label": stream.get("label") or stream["name"],
         "stream_id": stream.get("stream_id", ""), "fetched": 0, "error": "",
@@ -510,7 +509,8 @@ def _fetch_stream(client: McpHttpClient, stream: dict[str, str], start: datetime
     if not stream.get("stream_id") and not stream.get("query"):
         status["skipped"] = "未配置 stream_id / query"
         return [], status
-    template = (settings.patrol_mcp_args or "").strip()
+    cfg = cfg or load_config()
+    template = (cfg.args or "").strip()
     if template:
         arguments = render_args(
             template,
@@ -521,7 +521,7 @@ def _fetch_stream(client: McpHttpClient, stream: dict[str, str], start: datetime
     else:
         # 优先按工具真实 schema 自动映射；拿不到 schema 才退回默认形状
         arguments = map_arguments(
-            _tool_schema(client, settings.patrol_mcp_tool),
+            _tool_schema(client, cfg.tool),
             stream_id=stream.get("stream_id", ""),
             query=stream.get("query", ""),
             start=start, end=end, limit=limit,
@@ -533,7 +533,7 @@ def _fetch_stream(client: McpHttpClient, stream: dict[str, str], start: datetime
             start=start, end=end, limit=limit,
         )
     try:
-        result = client.call_tool(settings.patrol_mcp_tool, arguments)
+        result = client.call_tool(cfg.tool, arguments)
     except McpError as exc:
         status["error"] = str(exc)[:300]
         return [], status
@@ -564,11 +564,13 @@ STREAM_HINTS: dict[str, tuple[str, ...]] = {
 }
 
 
-def discover_streams(client: McpHttpClient | None = None) -> list[dict[str, Any]]:
+def discover_streams(client: McpHttpClient | None = None,
+                     cfg: PatrolConfig | None = None, db=None) -> list[dict[str, Any]]:
     """调 ``list_streams`` 拿 Graylog 的流清单，用于把真实的 stream id 填进配置。"""
-    cli = client or build_client()
+    cfg = cfg or load_config(db)
+    cli = client or build_client(cfg)
     try:
-        payload = parse_tool_result(cli.call_tool(settings.patrol_mcp_stream_tool, {}))
+        payload = parse_tool_result(cli.call_tool(cfg.stream_tool, {}))
     except McpError as exc:
         logger.warning("读取 Graylog 流清单失败：%s", exc)
         return []
@@ -600,17 +602,16 @@ def discover_streams(client: McpHttpClient | None = None) -> list[dict[str, Any]
     return streams
 
 
-def mcp_status(with_streams: bool = True) -> dict[str, Any]:
-    """页面「测试连接」：返回服务端信息、工具清单与流清单，失败时把原因原样带回。"""
-    if not settings.patrol_mcp_url:
-        return {"configured": False, "error": "未配置 PATROL_MCP_URL"}
-    client = build_client()
+def _status_payload(cfg: PatrolConfig, client: McpHttpClient,
+                    with_streams: bool, db=None) -> dict[str, Any]:
+    """用给定配置做一次连通性自检（页面「测试连接」与「保存前试连」共用）。"""
     try:
         info = client.describe()
     except McpError as exc:
-        return {"configured": True, "error": str(exc), "url": mask_url(settings.patrol_mcp_url)}
-    streams = discover_streams(client) if with_streams else []
-    # 用发现的流反查当前配置：提示「配的 stream_id 在 Graylog 里不存在」
+        return {"configured": True, "error": str(exc), "url": mask_url(cfg.url),
+                "transport": client.transport, "auth": cfg.auth}
+    streams = discover_streams(client, cfg=cfg, db=db) if with_streams else []
+    # 用发现的流反查配置：提示「配的 stream_id 在 Graylog 里不存在」
     known = {s["id"] for s in streams}
     current = [
         {
@@ -618,28 +619,64 @@ def mcp_status(with_streams: bool = True) -> dict[str, Any]:
             "stream_id": s["stream_id"], "query": s["query"],
             "exists": (s["stream_id"] in known) if (streams and s["stream_id"]) else None,
         }
-        for s in load_streams()
+        for s in cfg.streams
     ]
-    return {"configured": True, "error": "", **info, "streams": streams, "configured_streams": current}
+    return {"configured": True, "error": "", **info, "streams": streams,
+            "configured_streams": current, "source": cfg.source}
+
+
+def mcp_status(db=None, with_streams: bool = True,
+               cfg: PatrolConfig | None = None) -> dict[str, Any]:
+    """页面「测试连接」：读已保存配置做自检，失败时把原因原样带回。"""
+    cfg = cfg or load_config(db)
+    if not cfg.configured:
+        return {"configured": False, "error": "尚未配置 Graylog MCP 地址",
+                "source": cfg.source}
+    return _status_payload(cfg, build_client(cfg), with_streams, db)
+
+
+def mcp_probe(draft: dict[str, Any], db=None) -> dict[str, Any]:
+    """保存前试连：用「已保存配置 + 表单草稿」拼一个临时配置，不落库。
+
+    这样用户可以先确认地址/token 对不对，再决定要不要保存，避免"存错了还得回滚"。
+    """
+    cfg = load_config(db)
+    if draft.get("mcp_url"):
+        cfg.url = str(draft["mcp_url"]).strip()
+    if draft.get("mcp_token"):
+        cfg.token = str(draft["mcp_token"]).strip()
+    if draft.get("mcp_auth"):
+        cfg.auth = str(draft["mcp_auth"]).strip().lower()
+    if draft.get("mcp_tool"):
+        cfg.tool = str(draft["mcp_tool"]).strip()
+    if draft.get("mcp_stream_tool"):
+        cfg.stream_tool = str(draft["mcp_stream_tool"]).strip()
+    if draft.get("streams"):
+        cfg.streams = patrol_settings.normalize_streams(draft["streams"])
+    if not cfg.url:
+        return {"configured": False, "error": "请先填写 MCP 地址"}
+    return _status_payload(cfg, build_client(cfg), True, db)
 
 
 def run_patrol(db: Session, *, trigger: str = "cron", created_by: str = "system",
-               now: datetime | None = None, client: McpHttpClient | None = None) -> PatrolRun:
+               now: datetime | None = None, client: McpHttpClient | None = None,
+               cfg: PatrolConfig | None = None) -> PatrolRun:
     """执行一轮只读巡检并落库；任何异常都转成 run.status，不向上抛。"""
     started = time.monotonic()
     now = now or utcnow()
-    mode = (settings.patrol_mode or "dry-run").strip().lower()
-    start, end = _window(db, now)
+    cfg = cfg or load_config(db)
+    mode = cfg.mode
+    start, end = _window(db, now, cfg)
 
     run = PatrolRun(
-        trigger=trigger, mode="dry-run", status="ok",
+        trigger=trigger, mode=mode, status="ok",
         window_start=start, window_end=end, created_by=created_by,
     )
 
     # 未配置 MCP 时不报错、不刷屏：记一条 skipped，页面能看出"还没接上"
-    if not settings.patrol_mcp_url:
+    if not cfg.configured:
         run.status = "skipped"
-        run.error = "未配置 PATROL_MCP_URL"
+        run.error = "尚未配置 Graylog MCP 地址（日志巡检 → MCP 配置）"
         run.summary = {
             "note": "P0 dry-run：未配置 MCP，未读取任何日志",
             "streams": [], "rules": [], "decisions": {},
@@ -649,20 +686,20 @@ def run_patrol(db: Session, *, trigger: str = "cron", created_by: str = "system"
         db.commit()
         return run
 
-    client = client or build_client()
+    client = client or build_client(cfg)
     records: list[dict[str, Any]] = []
     stream_status: list[dict[str, Any]] = []
     configured = 0
-    for stream in load_streams():
+    for stream in cfg.streams:
         if stream.get("stream_id") or stream.get("query"):
             configured += 1
-        items, status = _fetch_stream(client, stream, start, end, settings.patrol_max_records)
+        items, status = _fetch_stream(client, stream, start, end, cfg.max_records, cfg)
         records.extend(items)
         stream_status.append(status)
 
     errors = [s for s in stream_status if s.get("error")]
     candidates, ignored_non_public = build_candidates(records, end)
-    apply_gates(db, candidates, now)
+    apply_gates(db, candidates, now, cfg)
 
     decisions: dict[str, int] = {}
     rule_hits: dict[str, int] = {}
@@ -691,7 +728,7 @@ def run_patrol(db: Session, *, trigger: str = "cron", created_by: str = "system"
         "window": {
             "start": start.isoformat() + "Z",
             "end": end.isoformat() + "Z",
-            "overlap_seconds": settings.patrol_overlap_seconds,
+            "overlap_seconds": cfg.overlap,
         },
         "streams": stream_status,
         "ignored_non_public": ignored_non_public,
@@ -708,7 +745,10 @@ def run_patrol(db: Session, *, trigger: str = "cron", created_by: str = "system"
             }
             for c in candidates[:10]
         ],
-        "mcp": {"tool": settings.patrol_mcp_tool, "url": mask_url(settings.patrol_mcp_url)},
+        "mcp": {
+            "tool": cfg.tool, "url": mask_url(cfg.url),
+            "auth": cfg.auth, "config_source": cfg.source, "enabled": cfg.enabled,
+        },
     }
 
     db.add(run)
