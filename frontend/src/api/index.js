@@ -42,6 +42,12 @@ export const api = {
   inspectionRun: () => http.post('/inspections/run', null, { timeout: 90000 }),
   inspectionReports: (params) => http.get('/inspections/reports', { params }),
   inspectionReport: (id) => http.get(`/inspections/reports/${id}`),
+
+  patrolRun: () => http.post('/patrols/run', null, { timeout: 120000 }),
+  patrolLatest: () => http.get('/patrols/latest'),
+  patrolRuns: (params) => http.get('/patrols', { params }),
+  patrolRunDetail: (id) => http.get(`/patrols/${id}`),
+  patrolMcpStatus: () => http.get('/patrols/mcp/status', { timeout: 60000 }),
   alerts: (params) => http.get('/alerts', { params }),
   alert: (id) => http.get(`/alerts/${id}`),
   genericAlert: (data) => http.post('/alerts/generic', data),

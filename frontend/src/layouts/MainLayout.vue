@@ -54,6 +54,7 @@ const router = useRouter()
 const menus = [
   { path: '/dashboard', title: '首页大盘', icon: 'Odometer' },
   { path: '/inspections', title: 'AI 巡检', icon: 'Search' },
+  { path: '/patrol', title: '日志巡检', icon: 'Aim' },
   { path: '/alerts', title: '告警中心', icon: 'Bell' },
   { path: '/blacklist-ip', title: 'IP 黑名单', icon: 'Lock' },
   { path: '/blacklist-domain', title: '域名黑名单', icon: 'Link' },

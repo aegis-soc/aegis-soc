@@ -51,6 +51,19 @@ class Settings:
     ai_llm_base_url: str
     ai_llm_api_key: str
     ai_llm_model: str
+    # 日志巡检（P0）：通过 MCP 读取 Graylog 三流日志，找 Graylog 规则漏掉的攻击源
+    patrol_enabled: bool
+    patrol_interval_seconds: int
+    patrol_overlap_seconds: int
+    patrol_mode: str                  # dry-run（只出报告）/ assist（待人工确认）/ auto（自动封）
+    patrol_mcp_url: str
+    patrol_mcp_token: str
+    patrol_mcp_tool: str
+    patrol_mcp_args: str              # JSON 模板，支持 ${stream_id} ${query} ${from} ${to} ${limit}
+    patrol_streams: str               # JSON 数组：[{name, label, stream_id, query}]
+    patrol_max_records: int
+    patrol_mcp_timeout: float
+    patrol_repeat_hours: int          # 同一 IP 在该时间窗内重复命中标记为 repeat
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -84,6 +97,27 @@ class Settings:
             ai_llm_base_url=_get("AI_LLM_BASE_URL", ""),      # 如 https://api.openai.com/v1
             ai_llm_api_key=_get("AI_LLM_API_KEY", ""),
             ai_llm_model=_get("AI_LLM_MODEL", "gpt-4o-mini"),
+            patrol_enabled=_bool("PATROL_ENABLED", False),
+            patrol_interval_seconds=_int("PATROL_INTERVAL_SECONDS", 300),
+            patrol_overlap_seconds=_int("PATROL_OVERLAP_SECONDS", 60),
+            patrol_mode=_get("PATROL_MODE", "dry-run"),
+            patrol_mcp_url=_get("PATROL_MCP_URL", ""),
+            patrol_mcp_token=_get("PATROL_MCP_TOKEN", ""),
+            patrol_mcp_tool=_get("PATROL_MCP_TOOL", "search_messages"),
+            patrol_mcp_args=_get(
+                "PATROL_MCP_ARGS",
+                '{"stream_id": "${stream_id}", "query": "${query}", "from": "${from}", '
+                '"to": "${to}", "limit": ${limit}}',
+            ),
+            patrol_streams=_get(
+                "PATROL_STREAMS",
+                '[{"name": "IPS", "label": "IPS 入侵防御", "stream_id": "", "query": ""},'
+                ' {"name": "WAF", "label": "WAF 应用防火墙", "stream_id": "", "query": ""},'
+                ' {"name": "ZTNA", "label": "零信任接入", "stream_id": "", "query": ""}]',
+            ),
+            patrol_max_records=_int("PATROL_MAX_RECORDS", 2000),
+            patrol_mcp_timeout=float(_get("PATROL_MCP_TIMEOUT", "30")),
+            patrol_repeat_hours=_int("PATROL_REPEAT_HOURS", 24),
         )
 
     @property

@@ -441,3 +441,57 @@ class InspectionReport(Base):
     ai_enhanced: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)  # 1 = LLM 生成
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+class PatrolRun(Base):
+    """日志巡检批次：每 5 分钟一轮，记录窗口、抓取量、候选与结论。
+
+    P0 阶段只做「只读 + 报告」，``decision`` 列写的是"如果执行会怎样"，
+    不会真的产生封禁任务；切到 assist / auto 后同一套字段直接承载执行结果。
+    """
+
+    __tablename__ = "patrol_run"
+    __table_args__ = (Index("idx_patrol_time", "created_at"),)
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    # 巡检对象是 Graylog 日志，与平台自检（inspection_report）区分开
+    trigger: Mapped[str] = mapped_column(String(16), nullable=False, default="cron")  # cron / manual
+    mode: Mapped[str] = mapped_column(String(16), nullable=False, default="dry-run")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="ok")  # ok / degraded / failed / skipped
+    window_start: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    window_end: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    fetched: Mapped[int] = mapped_column(Integer, nullable=False, default=0)        # 拉到的日志条数
+    candidate_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 候选 IP 数
+    would_block: Mapped[int] = mapped_column(Integer, nullable=False, default=0)      # 通过闸门的 IP 数
+    blocked: Mapped[int] = mapped_column(Integer, nullable=False, default=0)          # 实际下发数（P0 恒为 0）
+    # streams / rules / skipped / errors 等结构化摘要，前端直接渲染，不必反推
+    summary: Mapped[Any | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+class PatrolCandidate(Base):
+    """巡检候选 IP：一条记录 = 某轮巡检对某个 IP 的判定（含被跳过的原因）。"""
+
+    __tablename__ = "patrol_candidate"
+    __table_args__ = (
+        Index("idx_patrol_ip", "ip_value"),
+        Index("idx_patrol_run", "run_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(BigIntPK, nullable=False)
+    ip_value: Mapped[str] = mapped_column(String(64), nullable=False)
+    streams: Mapped[str | None] = mapped_column(String(64), nullable=True)   # 命中流，逗号分隔
+    hits: Mapped[int] = mapped_column(Integer, nullable=False, default=0)     # 窗口内日志条数
+    severity: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+    # [{key, name, count}] —— 前端直接展示命中原因，不必再查字典
+    rules: Mapped[Any | None] = mapped_column(JSON, nullable=True)
+    # would_block / skipped_internal / skipped_whitelist / skipped_existing / skipped_repeat
+    decision: Mapped[str] = mapped_column(String(24), nullable=False, default="would_block")
+    decision_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    first_seen: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_seen: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)

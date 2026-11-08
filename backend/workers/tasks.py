@@ -198,3 +198,21 @@ def run_inspection() -> dict[str, Any]:
     finally:
         db.close()
 
+
+
+@celery_app.task(name="aegis.run_patrol")
+def run_patrol_task() -> dict[str, Any]:
+    """定时日志巡检（默认每 5 分钟）：只读 Graylog 日志找漏封，P0 阶段不下发封禁。"""
+    from app.services.patrol import run_patrol as _run
+
+    if not settings.patrol_enabled:
+        return {"skipped": "PATROL_ENABLED=false"}
+    db = SessionLocal()
+    try:
+        run = _run(db, trigger="cron", created_by="celery")
+        return {
+            "run_id": run.id, "status": run.status, "fetched": run.fetched,
+            "candidates": run.candidate_count, "would_block": run.would_block,
+        }
+    finally:
+        db.close()

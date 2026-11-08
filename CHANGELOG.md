@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+### 日志巡检 P0（读 Graylog 日志补漏）
+
+- **新增「日志巡检」主菜单**：通过 MCP 只读查询 Graylog 三流日志（IPS / WAF / 零信任），每 5 分钟一轮，用确定性规则找出 Graylog 告警规则漏掉的攻击源；本轮只出报告，不创建黑名单、不下发封禁（`blocked` 恒为 0）
+- **MCP 客户端**（`app/services/mcp_client.py`）：Streamable HTTP + JSON-RPC，握手/会话维持/tools.list/tools.call，兼容 JSON 与 SSE 两种响应，纯标准库无额外依赖
+- **L1 规则**：IPS 未阻断、WAF 放行、零信任认证爆破、高频访问、跨流命中、情报命中；字段名按常见候选名自动匹配，换设备只改映射表
+- **窗口游标与重叠**：起点取上一轮终点减重叠秒数，最多回看 6 小时；非公网地址只计数不落候选，单轮候选上限 200
+- **处置预判**：白名单 / 已封 / 24h 重复分别标记为 `skipped_*`，其余为 `would_block`，为 P1 接自动封禁做准备
+- **新表** `patrol_run` / `patrol_candidate`（SQLite 启动自动建表；MySQL 执行 `sql/migrate_20261108_patrol.sql`），接口 `POST /patrols/run`、`GET /patrols[/latest|/{id}]`、`GET /patrols/mcp/status`，权限沿用 `inspection:read|run`
+- **页面**：KPI 条、日志流状态与规则命中、候选明细（原因标签 + 处置预判）、历史批次抽屉；「MCP 连通性」按钮可直接看到服务端信息与工具清单
+- **文档** `docs/graylog-patrol.md`：规则表、配置项、字段映射与接真实 MCP 的排查顺序
+
 ### 安全效果巡检（v2，两层 12 项）
 
 - **AI 巡检（新主菜单）**：从「平台体检」深化为「安全效果 + 平台运行」两层 12 项检查——新增三流覆盖（IPS/WAF/ZTNA）、封禁缺口归因（该封未封及原因分布）、处置率（24h/7d 含趋势）、持续攻击源（跨 ≥3 天重复出现，给出建议封禁时长）4 个安全效果项

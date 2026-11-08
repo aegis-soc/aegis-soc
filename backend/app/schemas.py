@@ -387,3 +387,40 @@ class InspectionOut(_Out):
     created_by: str | None = None
     created_at: datetime
 
+
+
+# ---------------- 日志巡检（P0） ----------------
+class PatrolCandidateOut(_Out):
+    id: int
+    run_id: int
+    ip_value: str
+    streams: str | None = None
+    hits: int
+    severity: int
+    rules: Any = None
+    decision: str
+    decision_reason: str | None = None
+    first_seen: datetime | None = None
+    last_seen: datetime | None = None
+
+
+class PatrolRunOut(_Out):
+    id: int
+    trigger: str
+    mode: str
+    status: str
+    window_start: datetime
+    window_end: datetime
+    duration_ms: int
+    fetched: int
+    candidate_count: int
+    would_block: int
+    blocked: int
+    summary: Any = None
+    error: str | None = None
+    created_by: str | None = None
+    created_at: datetime
+
+
+class PatrolDetailOut(PatrolRunOut):
+    candidates: list[PatrolCandidateOut] = []
