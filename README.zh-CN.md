@@ -11,7 +11,7 @@
 [![Frontend](https://img.shields.io/badge/frontend-Vue3%20%2F%20Element%20Plus-brightgreen)]()
 [![Queue](https://img.shields.io/badge/queue-Celery%20%2B%20Redis-red)]()
 
-**一句话定位：不改造日志平台，接收 Graylog 等多源告警，统一管理 IOC，插件化向各类安全设备执行封禁/解封，自带异步任务调度、全链路审计与 AI 巡检扩展能力。**
+**一句话定位：不改造日志平台，接收 Graylog 等多源告警，统一管理 IOC，插件化向各类安全设备执行封禁/解封，自带异步任务调度、全链路审计、AI 巡检、MCP 日志巡检与人机对话（自然语言查询）能力。**
 
 > 区别于重型商业 SOAR：通用化、开箱即用、Docker Compose 一键部署，AI 研判能力以插件方式渐进接入。
 > 职责边界清晰：**Graylog 负责日志采集、分析、告警判定；宙斯盾 AegisSoc 负责 IOC 管理、策略编排、设备 API 联动、任务与审计**。
@@ -98,6 +98,21 @@
 > 🔒 告警判定逻辑留在 Graylog；平台提供阈值、抑制、审批与熔断，避免误封泛滥。
 > 完整架构对照见 [docs/architecture-baseline.md](docs/architecture-baseline.md)。
 
+## 🗣 人机对话（自然语言查询）
+
+直接用中文提问——平台自己判断该查平台数据还是查 Graylog 日志，然后给出结论、明细表、柱图，以及它实际执行的那条查询。
+
+| 你的问法 | 走哪条路 | 实际执行 |
+|---|---|---|
+| `分析黑名单中来源top10或者top国家，top时间` | MySQL | 一次跑三个聚合：按来源、按国家、按天分布 |
+| `最近3天各个安全设备有未拦截的ip日志告警` | Graylog MCP | 读 IPS / WAF / 零信任三流日志，按源 IP 归并，并标注「已封」「疑似漏封」「内网地址」 |
+
+**不做 text2SQL。** 路由层只产出受控 DSL（`source` / `metric` / `group_by` / `filters` / `time` / `limit`），由代码编译成参数化 `SELECT` 或 MCP 检索。语言层拿不到任何表对象，也拼不出字符串 SQL——认不出的字段直接拒绝，不猜。
+
+护栏：只读（只生成 `SELECT`，测试里断言不含 DML）、过滤值全部绑定参数、`LIMIT ≤ 200`、日志时间窗 ≤ 7 天、单用户 20 次/分钟、`system_user` / `patrol_setting` 等敏感表显式排除、每次提问写 `CHAT_ASK` 审计。映射不到时明确回「没听懂」并给推荐问法，绝不编数据。**完全不依赖大模型**，纯规则即可用。
+
+DSL 示例、语义目录与新增问法的扩展步骤：[docs/chat-nlq.md](docs/chat-nlq.md)。
+
 ---
 
 ## 📦 快速部署（Docker Compose）
@@ -150,7 +165,7 @@ aegis-soc/
 ├── frontend/             # Vue3 + Element Plus + Vite
 ├── deploy/               # nginx.conf / my.cnf
 ├── scripts/              # smoke_test.py（部署后一键冒烟验收，仅标准库）
-├── docs/                 # install / deploy-cloud / verify / graylog / plugin-dev / api / security / architecture / blacklist-history / geoip / ai-inspection
+├── docs/                 # install / deploy-cloud / verify / graylog / plugin-dev / api / security / architecture / blacklist-history / geoip / ai-inspection / graylog-patrol / chat-nlq
 ├── .github/workflows/    # ci.yml（编译+测试+构建+编排校验）、release.yml（tag 触发多架构镜像发布）
 ├── docker-compose.yml
 ├── .env.example
@@ -246,7 +261,7 @@ git tag v1.0.0 && git push origin v1.0.0   # 打 tag 即触发发布
 | 版本 | 内容 |
 |---|---|
 | ✅ v1.0.0 | RBAC/JWT、IP/域名黑名单、IP 白名单+导入、Graylog/通用告警接入、策略引擎、插件网关、异步任务与到期解封、审计、熔断、Swagger、Docker Compose |
-| 📅 v1.1.0 | AI 安全巡检插件（WorkBuddy + Graylog MCP 多 Stream 巡检）、审批流增强、可视化 DAG 编排、DMZ 中转 Agent、Demo 模式全套编排 |
+| 📅 v1.1.0 | AI 安全巡检插件（WorkBuddy + Graylog MCP 多 Stream 巡检）、人机对话增强（追问上下文、日志与黑名单交叉比对、可选大模型兜底）、审批流增强、可视化 DAG 编排、DMZ 中转 Agent、Demo 模式全套编排 |
 | 📅 v1.2.0 | 域名/URL/Hash 真实下发、告警抑制与 IP 分组、插件独立进程与签名校验、插件市场 |
 | 📅 v2.0 | 报表导出、威胁情报联动、更多厂商官方插件 |
 

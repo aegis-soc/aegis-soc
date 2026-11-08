@@ -11,7 +11,7 @@ English | [简体中文](README.zh-CN.md)
 [![Frontend](https://img.shields.io/badge/frontend-Vue3%20%2F%20Element%20Plus-brightgreen)]()
 [![Queue](https://img.shields.io/badge/queue-Celery%20%2B%20Redis-red)]()
 
-**In one sentence: without touching your log platform, AegisSoc receives alerts from Graylog and other sources, manages IOC centrally, and executes block/unblock actions against security devices through plugins — with async task scheduling, full-chain auditing, and AI inspection built in.**
+**In one sentence: without touching your log platform, AegisSoc receives alerts from Graylog and other sources, manages IOC centrally, and executes block/unblock actions against security devices through plugins — with async task scheduling, full-chain auditing, AI inspection, MCP log patrol and a natural-language console built in.**
 
 > 🌏 Note: the detailed guides under `docs/` are currently written in Chinese; English translations are on the roadmap.
 
@@ -98,6 +98,21 @@ Log sources: WAF / IPS / Firewall / NDR / EDR / Nginx / app logs
 > 🔒 Alert decision logic stays in Graylog; the platform adds thresholds, suppression, approval and a kill switch to prevent over-blocking.
 > See [docs/architecture-baseline.md](docs/architecture-baseline.md) for the full architecture baseline.
 
+## 🗣 Natural-language Console
+
+Type a question in Chinese — the platform decides by itself whether it needs platform data or Graylog logs, then answers with a conclusion, a detail table, a bar chart, and the exact query it ran.
+
+| You ask | Route | What runs |
+|---|---|---|
+| `分析黑名单中来源top10或者top国家，top时间` | MySQL | three aggregates at once: by source, by country, by day |
+| `最近3天各个安全设备有未拦截的ip日志告警` | Graylog MCP | queries the IPS / WAF / ZTNA streams, groups by source IP, marks each one as already blocked / suspected gap / internal address |
+
+**No text2SQL.** The router only emits a whitelisted DSL (`source` / `metric` / `group_by` / `filters` / `time` / `limit`); code compiles that into parameterised `SELECT`s or MCP searches. Nothing in the language layer ever holds a table object or a SQL string — unknown fields are rejected instead of guessed.
+
+Guardrails: read-only (`SELECT` only, asserted in tests), every filter value bound as a parameter, `LIMIT ≤ 200`, log window ≤ 7 days, 20 questions/minute per user, `system_user` / `patrol_setting` excluded, every question audited as `CHAT_ASK`. When a question can't be mapped it returns *didn't understand* plus suggested phrasings — it never invents numbers. Works with **no LLM at all**; the rule engine is the only path.
+
+Details, DSL examples and how to add a new question type: [docs/chat-nlq.md](docs/chat-nlq.md).
+
 ---
 
 ## 📦 Quick Start (Docker Compose)
@@ -150,7 +165,7 @@ aegis-soc/
 ├── frontend/             # Vue3 + Element Plus + Vite
 ├── deploy/               # nginx.conf / my.cnf
 ├── scripts/              # smoke_test.py (post-deploy smoke checks, stdlib only)
-├── docs/                 # install / deploy-cloud / verify / graylog / plugin-dev / api / security / architecture / blacklist-history / geoip / ai-inspection
+├── docs/                 # install / deploy-cloud / verify / graylog / plugin-dev / api / security / architecture / blacklist-history / geoip / ai-inspection / graylog-patrol / chat-nlq
 ├── .github/workflows/    # ci.yml (compile+test+build+compose lint), release.yml (tag-triggered multi-arch images)
 ├── docker-compose.yml
 ├── .env.example
@@ -246,7 +261,7 @@ git tag v1.0.0 && git push origin v1.0.0   # tagging triggers a release
 | Version | Scope |
 |---|---|
 | ✅ v1.0.0 | RBAC/JWT, IP/domain blacklists, IP whitelist + import, Graylog/generic alert ingestion, policy engine, plugin gateway, async tasks & expiry unblock, auditing, kill switch, Swagger, Docker Compose |
-| 📅 v1.1.0 | AI security inspection plugin, enhanced approval flows, visual DAG orchestration, DMZ relay agent, full demo-mode compose |
+| 📅 v1.1.0 | AI security inspection plugin, NLQ follow-up context + log×blacklist cross-check + optional LLM fallback, enhanced approval flows, visual DAG orchestration, DMZ relay agent, full demo-mode compose |
 | 📅 v1.2.0 | Real dispatch for domain/URL/hash, alert suppression & IP groups, out-of-process plugins with signature checks, plugin marketplace |
 | 📅 v2.0 | Report export, threat-intel integration, more vendor plugins |
 
