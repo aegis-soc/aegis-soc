@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### 文档：已有部署如何升级
+
+- `docs/install.md` 新增第 10 节：备份（`.env` + `mysqldump`）→ 取新代码（含 `git stash` 处理服务器本地改动、GitHub 不通时用 ghfast 发行包覆盖）→ 按日期跑 `sql/migrate_*.sql` → `build api frontend` + `up -d` → 验证 → 回滚
+- 强调两件事：`docker compose restart` 不是升级（镜像里才是代码）；升级**不要加 `-v`**，否则会清 `mysql-data`
+- 中英 README 快速部署段各加一条升级入口
+
 ### 新增：告警接口来源 IP 白名单（页面可配，默认关闭）
 
 - **动机**：`/api/v1/alerts/graylog` 是「收到就封 IP」的入口，URL 外泄等于把封禁开关交出去；只在 `.env` 里加开关的话改一次就要重建容器，运维不会真去改

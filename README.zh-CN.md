@@ -151,6 +151,7 @@ http://<平台地址>/api/v1/alerts/graylog?secret=你的GRAYLOG_WEBHOOK_SECRET
 > Demo 模式（一键拉起 Graylog + ES + MongoDB）规划于 v1.1，见 `docker-compose-demo.yml`。
 > 🗂️ 黑名单为什么按「流水」存、被拦截的地址在哪看：见 [docs/blacklist-history.md](docs/blacklist-history.md)。
 > ☁️ 部署到云服务器？另见 [docs/deploy-cloud.md](docs/deploy-cloud.md)：资源基线、安全组与端口、HTTPS 启用、定时备份、磁盘与日志治理、上线自检清单。
+> ⬆️ 已有部署要升级？见 [docs/install.md 第 10 节](docs/install.md)：备份 → 取新代码 → 跑迁移 → 重建镜像。数据卷与 `.env` 不动，升级时**不要加 `-v`**。
 > ✅ **部署完怎么验？** 一条命令跑完 18 项闭环检查：`python scripts/smoke_test.py --secret <SECRET> --password <口令>`，详见 [docs/verify.md](docs/verify.md)。
 
 ---

@@ -224,3 +224,102 @@ cd backend && pytest -q
 - 数据库与 Redis 不暴露到公网，仅容器内网可达；
 - 定期备份 MySQL 数据卷并演练恢复；
 - 上线前按 [security.md](security.md) 完成脱敏自查。
+
+## 10. 版本升级（已有部署）
+
+原则：**代码可以覆盖，`.env` 与 `mysql-data` 卷永远不动**。一次升级只有四步——备份、取新代码、跑迁移、重建镜像。
+`docker compose restart` 不算升级：镜像里才是代码，`restart` 只是重启旧镜像。
+
+### 10.1 升级前备份（别省这一步）
+
+```bash
+cd ~/aegis-soc
+STAMP=$(date +%F-%H%M)
+cp -a .env .env.bak.$STAMP
+docker compose exec -T mysql \
+  sh -c 'mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --single-transaction aegis_soc' > backup-$STAMP.sql
+ls -lh backup-$STAMP.sql
+```
+
+`backup-*.sql` 是全部告警 / IOC / 任务 / 审计数据；`.env` 里是数据库口令与 `GRAYLOG_WEBHOOK_SECRET`。两个都留着。
+
+### 10.2 取新代码
+
+```bash
+git pull --ff-only
+```
+
+**如果报 `Your local changes would be overwritten`**：说明服务器上直接改过被 Git 跟踪的文件（多为通网时给 `backend/Dockerfile` 加镜像源、给 `docker-compose.yml` 加 `image:`）。先存档再拉：
+
+```bash
+git stash push -m "server-local-$STAMP"
+git pull --ff-only
+git stash pop          # 自动合并成功就不用管；冲突时手工取舍
+git stash list         # 确认没有残留的 stash
+```
+
+**如果 GitHub 连不上**（首次安装用过 `ghfast.top` 的情况很常见），改成下载发行包覆盖，只覆盖代码、不动数据：
+
+```bash
+curl -fL "https://ghfast.top/https://github.com/aegis-soc/aegis-soc/archive/refs/heads/main.tar.gz" -o /tmp/aegis.tgz
+tar -xzf /tmp/aegis.tgz -C ~/aegis-soc --strip-components=1 --exclude='.env'
+git -C ~/aegis-soc diff --stat        # 覆盖后应只剩代码变动
+```
+
+### 10.3 跑数据库迁移
+
+新版本可能在 `sql/` 下新增 `migrate_YYYYMMDD_*.sql`，**按日期顺序各执行一次**。脚本都是幂等的，重复执行不会重复建表：
+
+```bash
+for f in sql/migrate_*.sql; do
+  echo "== $f"
+  docker compose exec -T mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" aegis_soc' < "$f"
+done
+```
+
+只跑本版本新增的也可以——例如「告警来源 IP 白名单」只需 `sql/migrate_20261111_system_setting.sql`。
+迁移不会改老数据：本次只新增 `system_setting` 表。
+
+### 10.4 重建镜像并重启
+
+```bash
+docker compose build api frontend      # 2 GB 机型约 3–8 分钟
+docker compose up -d                   # 只重建有变化的容器
+docker compose restart nginx           # 仅当本次改过 deploy/nginx/*.conf
+```
+
+- `api` / `worker` / `beat` 三个服务共用同一个后端镜像（`image: aegis-soc-backend:local`）时，`build api` 一次即可，`up -d` 会把三者一起换成新镜像；
+- 若 `docker-compose.yml` 里没给它们指定统一 `image:`，改用 `docker compose up -d --build api worker beat frontend`；
+- 构建慢看进度：`docker compose build --progress=plain api`。
+
+### 10.5 验证
+
+```bash
+docker compose ps                       # api 为 healthy，其余 Up，且 CREATED 是刚才
+curl -s localhost:8080/api/healthz      # {"data":{"status":"healthy",...}}
+docker compose logs --tail=50 api       # 无 traceback、无「等待数据库就绪」
+```
+
+页面确认三处（本次 a5dbef2 的可见变化）：
+
+1. 左侧是 **7 个一级菜单**（首页大盘 / AI 运营 / 告警中心 / 黑白名单 / 策略配置 / 日志审计 / 系统设置）；
+2. 「系统设置」出现 **API 调用来源限制**，默认关闭；
+3. 「日志审计 → 任务日志」历史任务与回执仍在。
+
+### 10.6 回滚
+
+```bash
+git log --oneline -5                    # 找到升级前的提交
+# 镜像打标，方便秒回滚（可选但强烈建议）
+docker tag aegis-soc-api aegis-soc-api:backup-$STAMP 2>/dev/null || true
+git checkout <升级前的提交> -- .
+docker compose build api frontend && docker compose up -d
+```
+
+只有迁移改了表结构且必须回退时才动数据（会在备份点之后丢新数据）：
+
+```bash
+docker compose exec -T mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" aegis_soc' < backup-$STAMP.sql
+```
+
+> 升级不会碰 `mysql-data` 卷，也不会覆盖 `.env`；**只有 `docker compose down -v` 才清数据**，升级时不要加 `-v`。
