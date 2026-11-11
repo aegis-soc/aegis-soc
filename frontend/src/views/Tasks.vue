@@ -1,7 +1,7 @@
 <template>
   <div class="page">
     <div class="page-header">
-      <div><h2 class="page-title">任务中心</h2><p class="page-desc">异步下发任务、失败重试、人工审批与设备回执日志</p></div>
+      <div><h2 class="page-title">任务日志</h2><p class="page-desc">异步下发任务、失败重试、人工审批与设备回执日志</p></div>
       <el-button :icon="Refresh" @click="load">刷新</el-button>
     </div>
     <div class="filter-bar">

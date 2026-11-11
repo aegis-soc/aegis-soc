@@ -20,7 +20,7 @@ const routes = [
       { path: 'devices', name: 'devices', component: () => import('../views/Devices.vue'), meta: { title: '设备管理', icon: 'Monitor' } },
       { path: 'plugins', name: 'plugins', component: () => import('../views/Plugins.vue'), meta: { title: '插件管理', icon: 'Grid' } },
       { path: 'policies', name: 'policies', component: () => import('../views/Policies.vue'), meta: { title: '策略配置', icon: 'Setting' } },
-      { path: 'tasks', name: 'tasks', component: () => import('../views/Tasks.vue'), meta: { title: '任务中心', icon: 'List' } },
+      { path: 'tasks', name: 'tasks', component: () => import('../views/Tasks.vue'), meta: { title: '任务日志', icon: 'List' } },
       { path: 'audit', name: 'audit', component: () => import('../views/Audit.vue'), meta: { title: '操作审计', icon: 'Document' } },
       { path: 'system', name: 'system', component: () => import('../views/System.vue'), meta: { title: '系统设置', icon: 'Tools' } },
     ],

@@ -110,6 +110,8 @@ export const api = {
   getKillSwitch: () => http.get('/system/kill-switch'),
   setKillSwitch: (data) => http.post('/system/kill-switch', data),
   users: () => http.get('/system/users'),
+  systemSettings: () => http.get('/system/settings'),
+  saveSystemSettings: (data) => http.put('/system/settings', data),
 }
 
 export default api

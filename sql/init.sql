@@ -481,3 +481,14 @@ CREATE TABLE IF NOT EXISTS `chat_message` (
   PRIMARY KEY (`id`),
   KEY `idx_chat_msg_session` (`session_id`)
 ) ENGINE=InnoDB COMMENT='人机对话消息';
+
+-- 系统运行期配置（key/value）：告警接口来源 IP 白名单等，页面保存即生效
+CREATE TABLE IF NOT EXISTS `system_setting` (
+  `id`         BIGINT      NOT NULL AUTO_INCREMENT,
+  `skey`       VARCHAR(64) NOT NULL COMMENT '配置键，如 alert_ip_allowlist',
+  `svalue`     TEXT        NOT NULL COMMENT '配置值；列表类用换行分隔',
+  `updated_by` VARCHAR(64) NULL,
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_setting_key` (`skey`)
+) ENGINE=InnoDB COMMENT='系统运行期配置';

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hmac
+import logging
 import time
 from typing import Any
 
@@ -9,7 +10,7 @@ from fastapi import APIRouter, Body, Depends, Query, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.common import BizError, client_ip, ok, paginate
+from app.common import BizError, client_ip, ok, paginate, source_ip
 from app.config import settings
 from app.database import get_db
 from app.deps import require_perms
@@ -17,11 +18,30 @@ from app.engines.alert_parser import parse_generic, parse_graylog
 from app.engines.policy import process_alert
 from app.models import AlertEvent
 from app.schemas import AlertOut, AlertReceiveOut, GenericAlertIn
+from app.services import sysconf
+
+logger = logging.getLogger("aegis")
 
 router = APIRouter(tags=["告警"])
 
 
-def _verify_webhook(request: Request) -> None:
+def _verify_source(request: Request, db: Session) -> str:
+    """来源 IP 白名单（系统设置页可开关，默认关闭）。
+
+    放在 secret 之前判：secret 对错是"你有没有钥匙"，来源 IP 是"你能不能走到
+    这道门前"——先挡来源，日志里就不会被无效 secret 刷满。
+    返回已判定的来源 IP，供后续复用，避免两处取值口径不一致。
+    """
+    ip = source_ip(request)
+    networks = sysconf.allowlist_networks(db)
+    if networks and not sysconf.ip_allowed(ip, networks):
+        logger.warning("告警接口拒绝来源 IP %s（不在白名单内）", ip)
+        raise BizError(f"来源 IP {ip} 不在 API 调用白名单内", 403, 403)
+    return ip
+
+
+def _verify_webhook(request: Request, db: Session) -> None:
+    _verify_source(request, db)
     secret = request.query_params.get("secret") or request.headers.get("x-graylog-secret", "")
     if not secret or not hmac.compare_digest(secret, settings.graylog_webhook_secret):
         raise BizError("Webhook Secret 校验失败", 403, 403)
@@ -51,7 +71,7 @@ def graylog_alert(
     校验 Secret / 可选 Bearer / 可选时间戳防重放后，快速返回 accepted，
     实际处置全部在策略引擎与异步任务中完成。
     """
-    _verify_webhook(request)
+    _verify_webhook(request, db)
     parsed = parse_graylog(payload)
     result = process_alert(db, parsed, client_ip=client_ip(request))
     return ok(AlertReceiveOut(**result).model_dump())

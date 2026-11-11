@@ -323,9 +323,9 @@ def check_tasks(db: Session, ctx: dict[str, Any] | None = None) -> CheckResult:
     fail_rate = failed_24h / max(total_24h, 1)
     summary = f"24h 任务 {total_24h} 个，成功 {success_24h}，失败 {failed_24h}（{fail_rate:.0%}）"
     if fail_rate >= 0.5:
-        status, advice = "fail", "过半任务失败：优先检查设备连通性与凭据；持续失败看「任务中心」错误详情"
+        status, advice = "fail", "过半任务失败：优先检查设备连通性与凭据；持续失败看「任务日志」错误详情"
     elif fail_rate > 0.1 or stuck > 20:
-        status, advice = "warn", "存在失败或积压任务：查看任务中心 RETRY/FAILED 明细，必要时手动重试"
+        status, advice = "warn", "存在失败或积压任务：查看任务日志 RETRY/FAILED 明细，必要时手动重试"
     else:
         status, advice = "ok", ""
     return CheckResult("tasks", "任务队列", status, summary, data, advice)

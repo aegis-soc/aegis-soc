@@ -355,6 +355,16 @@ class KillSwitchIn(BaseModel):
     reason: str | None = None
 
 
+class SystemSettingsIn(BaseModel):
+    """系统设置页保存的运行期配置；两项一起提交，避免半更新。
+
+    ``alert_ip_allowlist`` 每行一个 IP 或 CIDR，留空表示不限制来源。
+    """
+
+    alert_ip_enforce: bool = False
+    alert_ip_allowlist: str = Field(default="", max_length=4000)
+
+
 class SystemStatusOut(BaseModel):
     version: str
     app_env: str

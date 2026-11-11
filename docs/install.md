@@ -129,8 +129,25 @@ curl -X POST "http://127.0.0.1:8080/api/v1/alerts/graylog?secret=你的SECRET" \
   }'
 ```
 
-在「任务中心」可看到 `BLOCK` 任务及设备回执；「IP 黑名单」中可看到 `8.8.8.8`。
+在「任务日志」可看到 `BLOCK` 任务及设备回执；「IP 黑名单」中可看到 `8.8.8.8`。
 到期解封由 Celery Beat 每分钟扫描 `expire_at` 自动触发。
+
+### 4.1 限制告警来源 IP（可选，默认关闭）
+
+告警接入接口 `/api/v1/alerts/graylog` 被调用就会封 IP，URL 一旦外泄等于把封禁开关交出去。
+确定 Graylog 的出口地址后，建议在「系统设置 → API 调用来源限制」里只放行它：
+
+1. 打开开关，按行填 Graylog 服务器出口 IP 或网段（如 `10.32.239.10`、`10.46.0.0/16`），保存；
+2. 保存即生效，不需要重启容器；名单外的来源直接 `403 来源 IP x.x.x.x 不在 API 调用白名单内`；
+3. 判断依据是 nginx 写入的 `X-Real-IP`（`$remote_addr`），客户端自带的 `X-Forwarded-For` **不参与**判断，伪造该头绕不过去。
+
+留空或关闭开关 = 不限制。老库升级需先建表：
+
+```bash
+docker compose exec -T mysql mysql -uroot -p"$MYSQL_ROOT_PASSWORD" aegis_soc < sql/migrate_20261111_system_setting.sql
+```
+
+误配把自己挡在外面时，用管理员在页面上关掉开关即可（该接口本身不走白名单）。
 
 ## 5. 对接真实设备
 

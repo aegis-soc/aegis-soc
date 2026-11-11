@@ -5,6 +5,7 @@ code: 0 成功 / 400 参数非法 / 401 未认证 / 403 无权限或白名单拦
 """
 from __future__ import annotations
 
+import ipaddress
 import logging
 from typing import Any
 
@@ -39,6 +40,30 @@ def client_ip(request: Request) -> str:
     if forwarded:
         return forwarded.split(",")[0].strip()
     return request.client.host if request.client else "unknown"
+
+
+def source_ip(request: Request) -> str:
+    """用于访问控制的来源 IP：只信本机/私网反代传来的 ``X-Real-IP``。
+
+    和 :func:`client_ip` 的区别在这里——审计日志记错一个 IP 只是难看，
+    白名单判错一个 IP 就是"谁都能伪造告警"或"真告警全被挡"。所以：
+    直连对端是公网地址时用它自己的地址，``X-Real-IP`` 一律不认（那是客户端
+    自己写的）；只有对端是 Docker 网段/回环（也就是我们的 nginx）时才取
+    ``X-Real-IP``，nginx 里该头由 ``$remote_addr`` 覆盖写入，客户端改不了。
+    """
+    peer = request.client.host if request.client else ""
+    real = (request.headers.get("x-real-ip") or "").strip()
+    if real and (not peer or _is_local_peer(peer)):
+        return real
+    return peer or "unknown"
+
+
+def _is_local_peer(peer: str) -> bool:
+    try:
+        return ipaddress.ip_address(peer).is_private
+    except ValueError:
+        # 非 IP 字面量（容器名、测试客户端的 "testclient"）只可能来自本机链路
+        return True
 
 
 def paginate(stmt: Select, db: Session, page: int, page_size: int) -> tuple[list[Any], int]:

@@ -8,11 +8,23 @@
           <div class="brand-sub">通用安全运营自动化 AI+SOC</div>
         </div>
       </div>
-      <el-menu :default-active="activeMenu" router background-color="#1f2a3d" text-color="#c0c8d6" active-text-color="#ffffff">
-        <el-menu-item v-for="item in menus" :key="item.path" :index="item.path">
-          <el-icon><component :is="item.icon" /></el-icon>
-          <span>{{ item.title }}</span>
-        </el-menu-item>
+      <el-menu :key="activeGroupKey" :default-active="activeMenu" :default-openeds="openedGroups" router background-color="#1f2a3d" text-color="#c0c8d6" active-text-color="#ffffff">
+        <template v-for="item in menus" :key="item.path || item.index">
+          <el-sub-menu v-if="item.children" :index="item.index">
+            <template #title>
+              <el-icon><component :is="item.icon" /></el-icon>
+              <span>{{ item.title }}</span>
+            </template>
+            <el-menu-item v-for="child in item.children" :key="child.path" :index="child.path">
+              <el-icon><component :is="child.icon" /></el-icon>
+              <span>{{ child.title }}</span>
+            </el-menu-item>
+          </el-sub-menu>
+          <el-menu-item v-else :index="item.path">
+            <el-icon><component :is="item.icon" /></el-icon>
+            <span>{{ item.title }}</span>
+          </el-menu-item>
+        </template>
       </el-menu>
       <div class="aside-foot">v1.0.0 · Apache 2.0</div>
     </el-aside>
@@ -53,22 +65,59 @@ const route = useRoute()
 const router = useRouter()
 const menus = [
   { path: '/dashboard', title: '首页大盘', icon: 'Odometer' },
-  { path: '/inspections', title: 'AI 巡检', icon: 'Search' },
-  { path: '/patrol', title: '日志巡检', icon: 'Aim' },
-  { path: '/chat', title: '人机对话', icon: 'ChatDotRound' },
+  {
+    index: 'g-ai', title: 'AI 运营', icon: 'MagicStick',
+    children: [
+      { path: '/inspections', title: 'AI 巡检', icon: 'Search' },
+      { path: '/patrol', title: '日志巡检', icon: 'Aim' },
+      { path: '/chat', title: '人机对话', icon: 'ChatDotRound' },
+    ],
+  },
   { path: '/alerts', title: '告警中心', icon: 'Bell' },
-  { path: '/blacklist-ip', title: 'IP 黑名单', icon: 'Lock' },
-  { path: '/blacklist-domain', title: '域名黑名单', icon: 'Link' },
-  { path: '/whitelist-ip', title: 'IP 白名单', icon: 'Unlock' },
-  { path: '/devices', title: '设备管理', icon: 'Monitor' },
-  { path: '/plugins', title: '插件管理', icon: 'Grid' },
-  { path: '/policies', title: '策略配置', icon: 'Setting' },
-  { path: '/tasks', title: '任务中心', icon: 'List' },
-  { path: '/audit', title: '操作审计', icon: 'Document' },
+  {
+    index: 'g-ioc', title: '黑白名单', icon: 'Filter',
+    children: [
+      { path: '/blacklist-ip', title: 'IP 黑名单', icon: 'Lock' },
+      { path: '/blacklist-domain', title: '域名黑名单', icon: 'Link' },
+      { path: '/whitelist-ip', title: 'IP 白名单', icon: 'Unlock' },
+    ],
+  },
+  {
+    index: 'g-policy', title: '策略配置', icon: 'SetUp',
+    children: [
+      { path: '/policies', title: '策略列表', icon: 'Operation' },
+      { path: '/devices', title: '设备管理', icon: 'Monitor' },
+      { path: '/plugins', title: '插件管理', icon: 'Grid' },
+    ],
+  },
+  {
+    index: 'g-audit', title: '日志审计', icon: 'Document',
+    children: [
+      { path: '/tasks', title: '任务日志', icon: 'List' },
+      { path: '/audit', title: '操作审计', icon: 'Document' },
+    ],
+  },
   { path: '/system', title: '系统设置', icon: 'Tools' },
 ]
 const activeMenu = computed(() => route.path)
-const currentTitle = computed(() => route.meta.title || '宙斯盾 Aegis')
+
+// 只展开当前页面所在分组，其余收起——一级菜单少一半，扫一眼就能定位
+const openedGroups = computed(() => {
+  const group = menus.find((item) => (item.children || []).some((child) => child.path === route.path))
+  return group ? [group.index] : []
+})
+
+function menuTitle(path) {
+  for (const item of menus) {
+    if (item.path === path) return item.title
+    const child = (item.children || []).find((c) => c.path === path)
+    if (child) return `${item.title} / ${child.title}`
+  }
+  return route.meta.title || '宙斯盾 Aegis'
+}
+const currentTitle = computed(() => menuTitle(route.path))
+// 换分组时重新挂载菜单，保证只有当前分组是展开的
+const activeGroupKey = computed(() => openedGroups.value[0] || 'root')
 const roleLabel = computed(() => ({ admin: '系统管理员', operator: '安全运营', auditor: '只读审计员' })[store.role] || store.role)
 
 async function refreshStatus() {

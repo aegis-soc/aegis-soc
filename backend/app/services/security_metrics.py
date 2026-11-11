@@ -38,7 +38,7 @@ GAP_REASONS: dict[str, dict[str, str]] = {
     },
     "dispatch_failed": {
         "label": "下发未生效",
-        "hint": "策略命中了但没有生效黑名单：查设备连通性、凭据与任务中心失败明细",
+        "hint": "策略命中了但没有生效黑名单：查设备连通性、凭据与任务日志失败明细",
     },
     "kill_switch": {
         "label": "熔断期间留痕",

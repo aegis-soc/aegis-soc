@@ -96,7 +96,7 @@ register(MyDevicePlugin)
 - `required_config`：必填配置键列表。`BasePlugin.execute()` 与连通性测试都会先调用 `validate_config()`，
   缺项返回「插件配置错误: 缺少必填配置: base_url」并直接判失败（不重试、不进熔断），
   同时会识别 `_credential_missing`，提示「凭据环境变量 XXX 未设置」。
-- 若插件不支持 `UNBLOCK`，到期解封与白名单解封任务不会派发给它（会在任务中心体现为无匹配设备）。
+- 若插件不支持 `UNBLOCK`，到期解封与白名单解封任务不会派发给它（会在任务日志体现为无匹配设备）。
 - 未实现 `query_status()` 时保持默认实现即可：它**返回失败**，不会伪造「查询成功」。
 
 ### 步骤 4：配置设备
@@ -156,7 +156,7 @@ MY_DEVICE_CRED='{"api_key":"your-real-key"}'
 ### 步骤 5：测试与验收
 
 - 「设备管理 → 连通性测试」验证 `test_connection`；
-- 用 `mock` 之外的真实设备前，先在测试环境发一条告警，检查任务中心的 `device_task_log` 请求/响应报文；
+- 用 `mock` 之外的真实设备前，先在测试环境发一条告警，检查任务日志的 `device_task_log` 请求/响应报文；
 - 补充单元测试（见 `backend/tests/`），禁止依赖真实设备。
 
 ## 3. 硬性规范

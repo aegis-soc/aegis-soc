@@ -565,3 +565,21 @@ class ChatMessage(Base):
     trace: Mapped[Any | None] = mapped_column(JSON, nullable=True)
     elapsed_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+class SystemSetting(Base):
+    """运行期可改的系统级配置（key/value）。
+
+    为什么不塞进 ``.env``：像「告警接口允许哪些来源 IP」这种开关，运维改一次
+    就要重建容器，实际没人愿意改；落库后页面保存即生效，且变更走审计。
+    ``.env`` 只保留启动必需的连接串与密钥。
+    """
+
+    __tablename__ = "system_setting"
+    __table_args__ = (UniqueConstraint("skey", name="uk_setting_key"),)
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    skey: Mapped[str] = mapped_column(String(64), nullable=False)
+    svalue: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    updated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)

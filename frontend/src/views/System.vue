@@ -1,7 +1,7 @@
 <template>
   <div class="page">
     <div class="page-header">
-      <div><h2 class="page-title">系统设置</h2><p class="page-desc">运行状态、全局熔断开关、账号与口令管理</p></div>
+      <div><h2 class="page-title">系统设置</h2><p class="page-desc">运行状态、全局熔断开关、API 调用来源限制、账号与口令管理</p></div>
       <el-button :icon="Refresh" @click="load">刷新</el-button>
     </div>
 
@@ -24,6 +24,33 @@
       </p>
       <el-switch v-model="killSwitch" :disabled="store.role !== 'admin'" active-text="已熔断（暂停自动封禁）" inactive-text="正常运行" @change="changeKill" />
       <span v-if="store.role !== 'admin'" class="text-muted" style="margin-left: 12px; font-size: 12px">仅系统管理员可修改</span>
+    </div>
+
+    <div class="table-card" style="margin-bottom: 16px">
+      <h3 style="margin: 0 0 8px; font-size: 14px">API 调用来源限制</h3>
+      <p class="text-muted" style="font-size: 12px; margin: 0 0 14px">
+        只作用于告警接入接口 <code>/api/v1/alerts/graylog</code>：开启后仅允许名单内的 IP 调用，其余一律 403。
+        默认关闭；名单留空等于不限制。保存即时生效，不需要重启容器。<br>
+        来源 IP 取 nginx 的 <code>$remote_addr</code>（<code>X-Real-IP</code>），客户端自带的 <code>X-Forwarded-For</code> 不参与判断。
+      </p>
+      <el-form label-width="110px" style="max-width: 560px">
+        <el-form-item label="启用来源限制">
+          <el-switch v-model="apiGuard.enforce" :disabled="!isAdmin" />
+          <span class="text-muted" style="margin-left: 12px; font-size: 12px">
+            {{ apiGuard.enforce ? `已启用，放行 ${apiGuard.count} 条` : '未启用（任何来源都可调用）' }}
+          </span>
+        </el-form-item>
+        <el-form-item label="允许的 IP">
+          <el-input
+            v-model="apiGuard.allowlist" type="textarea" :rows="4" :disabled="!isAdmin"
+            placeholder="每行一个 IP 或网段，也可用逗号分隔，例如：&#10;10.32.239.10&#10;10.46.0.0/16"
+          />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" :disabled="!isAdmin" @click="saveGuard">保存</el-button>
+          <span v-if="!isAdmin" class="text-muted" style="margin-left: 12px; font-size: 12px">仅系统管理员可修改</span>
+        </el-form-item>
+      </el-form>
     </div>
 
     <div class="table-card" style="margin-bottom: 16px">
@@ -52,7 +79,7 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../api'
@@ -63,6 +90,8 @@ const cacheMode = ref('-')
 const killSwitch = ref(false)
 const users = ref([])
 const pwd = reactive({ old_password: '', new_password: '' })
+const apiGuard = reactive({ enforce: false, allowlist: '', count: 0 })
+const isAdmin = computed(() => store.role === 'admin')
 
 async function load() {
   try {
@@ -71,12 +100,31 @@ async function load() {
     killSwitch.value = Boolean(ks.enabled)
     store.killSwitch = killSwitch.value
     users.value = (await api.users()).items || []
+    if (isAdmin.value) await loadGuard()
   } catch (e) { /* 拦截器已提示 */ }
   try {
     const res = await fetch('/api/healthz')
     const body = await res.json()
     cacheMode.value = body?.data?.cache || '-'
   } catch (e) { cacheMode.value = '-' }
+}
+async function loadGuard() {
+  const data = await api.systemSettings()
+  apiGuard.enforce = Boolean(data.alert_ip_enforce)
+  apiGuard.allowlist = data.alert_ip_allowlist || ''
+  apiGuard.count = data.alert_ip_count || 0
+}
+async function saveGuard() {
+  try {
+    const data = await api.saveSystemSettings({
+      alert_ip_enforce: apiGuard.enforce,
+      alert_ip_allowlist: apiGuard.allowlist,
+    })
+    apiGuard.enforce = Boolean(data.alert_ip_enforce)
+    apiGuard.allowlist = data.alert_ip_allowlist || ''
+    apiGuard.count = data.alert_ip_count || 0
+    ElMessage.success(apiGuard.enforce ? `已保存，放行 ${apiGuard.count} 条来源` : '已保存，来源限制已关闭')
+  } catch (e) { /* 拦截器已提示 */ }
 }
 async function changeKill(value) {
   try {
