@@ -152,6 +152,7 @@ http://<platform-host>/api/v1/alerts/graylog?secret=YOUR_GRAYLOG_WEBHOOK_SECRET
 > 🗂️ Why the blacklist is append-only and where rejected attempts show up: [docs/blacklist-history.md](docs/blacklist-history.md).
 > ☁️ Deploying to a cloud server? See [docs/deploy-cloud.md](docs/deploy-cloud.md): resource baseline, security groups & ports, HTTPS, scheduled backups, disk/log hygiene, go-live checklist.
 > ⬆️ Upgrading an existing deployment? See [docs/install.md §10](docs/install.md): backup → pull → migrate → rebuild. Data volume and `.env` are untouched — never add `-v` during an upgrade.
+> 🐌 Slow builds (pip / npm timeouts)? Run `bash scripts/install.sh --cn-mirror`, or set `AEGIS_PIP_INDEX` / `AEGIS_NPM_REGISTRY` in `.env` — see [docs/install.md §2.4](docs/install.md). No Dockerfile edits needed, so `git pull` stays clean.
 > ✅ **How to verify a deployment?** One command runs 18 closed-loop checks: `python scripts/smoke_test.py --secret <SECRET> --password <PASSWORD>`, see [docs/verify.md](docs/verify.md).
 
 ---

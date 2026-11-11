@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### 变更：镜像源与镜像名改为构建参数（不再需要改 Dockerfile / compose）
+
+以前境内构建要在服务器上直接改 `backend/Dockerfile`、`frontend/Dockerfile` 和 `docker-compose.yml`，
+于是每次 `git pull` 都报 `local changes would be overwritten`，升级必须 `git stash` 手工合并。
+
+- **`backend/Dockerfile`**：新增 `ARG PIP_INDEX_URL` / `ARG PIP_TRUSTED_HOST`，默认空 = 官方 PyPI，非空时才追加 `--index-url`；构建日志打印 `pip index: …`
+- **`frontend/Dockerfile`**：新增 `ARG NPM_REGISTRY`，默认空 = 官方 registry，非空时 `npm ci --registry=…`（npm 10 会把 lockfile 里 npmjs 的 resolved 地址替换过去）；日志打印 `npm registry: …`
+- **`docker-compose.yml`**：`x-backend-common` 加 `image: aegis-soc-backend:local`（api/worker/beat 共用，只构建一次）与 `build.args` 透传；`frontend` 固定为 `aegis-soc-frontend:local`
+- **`.env.example`**：新增 `AEGIS_*` 段（`AEGIS_PIP_INDEX` / `AEGIS_NPM_REGISTRY` / `AEGIS_PIP_TRUSTED_HOST` / 两个 image 名），注释形式给出国内源示例
+- **`scripts/install.sh`**：新增 `--cn-mirror`（清华 PyPI + npmmirror 一次配好）、`--pip-index URL`、`--npm-registry URL`，写入 `.env` 后由 compose 透传
+- **文档**：`docs/install.md` 新增 2.4 节「构建走国内源」，2.3 预构建镜像改为给固定 tag 打标（`aegis-soc-backend:local`）后 `up -d --no-build`，第 8 节补 pip/npm 超时与镜像名排查，10.2 说明本版本起服务器本地改动可整体丢弃
+
 ### 文档：已有部署如何升级
 
 - `docs/install.md` 新增第 10 节：备份（`.env` + `mysqldump`）→ 取新代码（含 `git stash` 处理服务器本地改动、GitHub 不通时用 ghfast 发行包覆盖）→ 按日期跑 `sql/migrate_*.sql` → `build api frontend` + `up -d` → 验证 → 回滚

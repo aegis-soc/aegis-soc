@@ -152,6 +152,7 @@ http://<平台地址>/api/v1/alerts/graylog?secret=你的GRAYLOG_WEBHOOK_SECRET
 > 🗂️ 黑名单为什么按「流水」存、被拦截的地址在哪看：见 [docs/blacklist-history.md](docs/blacklist-history.md)。
 > ☁️ 部署到云服务器？另见 [docs/deploy-cloud.md](docs/deploy-cloud.md)：资源基线、安全组与端口、HTTPS 启用、定时备份、磁盘与日志治理、上线自检清单。
 > ⬆️ 已有部署要升级？见 [docs/install.md 第 10 节](docs/install.md)：备份 → 取新代码 → 跑迁移 → 重建镜像。数据卷与 `.env` 不动，升级时**不要加 `-v`**。
+> 🐌 境内构建慢（pip / npm 超时）？执行 `bash scripts/install.sh --cn-mirror`，或在 `.env` 里设 `AEGIS_PIP_INDEX` / `AEGIS_NPM_REGISTRY`，见 [docs/install.md 2.4 节](docs/install.md)。**不用再改 Dockerfile**，`git pull` 可以干净快进。
 > ✅ **部署完怎么验？** 一条命令跑完 18 项闭环检查：`python scripts/smoke_test.py --secret <SECRET> --password <口令>`，详见 [docs/verify.md](docs/verify.md)。
 
 ---

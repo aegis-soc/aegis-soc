@@ -6,9 +6,15 @@ name: aegis-soc
 # deploy/mysql/my.cnf 供独立部署参考，这里用 command 参数避免挂载文件权限问题。
 
 x-backend-common: &backend-common
+  # 三个服务共用同一个镜像 tag：`docker compose build api` 构建一次，worker/beat
+  # 直接复用，不会各建一份。构建参数见 .env 的 AEGIS_* 段（默认走官方源）。
+  image: ${AEGIS_BACKEND_IMAGE:-aegis-soc-backend:local}
   build:
     context: ./backend
     dockerfile: Dockerfile
+    args:
+      PIP_INDEX_URL: ${AEGIS_PIP_INDEX:-}
+      PIP_TRUSTED_HOST: ${AEGIS_PIP_TRUSTED_HOST:-}
   env_file:
     - .env
   restart: unless-stopped
@@ -95,9 +101,12 @@ services:
       - --loglevel=info
 
   frontend:
+    image: ${AEGIS_FRONTEND_IMAGE:-aegis-soc-frontend:local}
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        NPM_REGISTRY: ${AEGIS_NPM_REGISTRY:-}
     expose:
       - "80"
     depends_on:

@@ -84,15 +84,37 @@ docker compose logs -f api # 首次启动会执行 bootstrap 并打印完成日�
 docker pull ghcr.io/aegis-soc/aegis-soc-backend:1.0.0
 docker pull ghcr.io/aegis-soc/aegis-soc-frontend:1.0.0
 
-# Compose 默认镜像名是 <项目名>-<服务名>，本地打标签后即可直接 up
-docker tag ghcr.io/aegis-soc/aegis-soc-backend:1.0.0  aegis-soc-api
-docker tag ghcr.io/aegis-soc/aegis-soc-backend:1.0.0  aegis-soc-worker
-docker tag ghcr.io/aegis-soc/aegis-soc-backend:1.0.0  aegis-soc-beat
-docker tag ghcr.io/aegis-soc/aegis-soc-frontend:1.0.0 aegis-soc-frontend
+# compose 里三个后端服务的镜像名固定为 aegis-soc-backend:local，前端为 aegis-soc-frontend:local
+docker tag ghcr.io/aegis-soc/aegis-soc-backend:1.0.0  aegis-soc-backend:local
+docker tag ghcr.io/aegis-soc/aegis-soc-frontend:1.0.0 aegis-soc-frontend:local
+docker compose up -d --no-build
 ```
 
 > 拉取私有包前需先 `echo $GITHUB_TOKEN | docker login ghcr.io -u <用户名> --password-stdin`；
 > 若把包设为 Public，则可直接匿名拉取。国内拉取慢时可参考 `docs/deploy-cloud.md` 配置镜像加速或同步到阿里云 ACR。
+
+### 2.4 可选：构建走国内源
+
+pip / npm 默认走官方源。境内主机常见两类失败：`pip` 拉大索引页超时（报 `Could not find a version that satisfies…`
+或 `from versions: none`）、npm 卡在 `registry.npmjs.org`。**不用改 Dockerfile**，两种方式任选：
+
+```bash
+# 方式一：重跑安装脚本时加参数（会写进 .env，之后每次 build 都生效）
+sudo bash scripts/install.sh --cn-mirror
+
+# 方式二：手工在 .env 里加两行，再重建
+echo 'AEGIS_PIP_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple' >> .env
+echo 'AEGIS_NPM_REGISTRY=https://registry.npmmirror.com'          >> .env
+docker compose build api frontend
+```
+
+只换其中一个源就用 `--pip-index <URL>` / `--npm-registry <URL>`。内网 HTTP 私服还要加一行
+`AEGIS_PIP_TRUSTED_HOST=<主机名>`（HTTPS 源不需要）。构建日志会打印实际使用的源：
+`pip index: …` / `npm registry: …`。留空 = 官方源，境外或直连正常的机器不受影响。
+
+> 为什么不再手改 Dockerfile：以前只能在服务器上直接改 `backend/Dockerfile`，导致 `git pull` 报
+> `local changes would be overwritten`，每次升级都得 `git stash`。改成构建参数后，这些配置都在 `.env` 里，
+> 与代码彻底分离，升级可以干净快进。
 
 ## 3. 启动顺序与健康检查
 
@@ -215,6 +237,9 @@ cd backend && pytest -q
 | 告警 accepted 但没有任务 | 依次检查：熔断开关、白名单命中、IP 是否为内网/保留地址、策略置信度与阈值、设备能力矩阵 |
 | 任务一直 PENDING | 检查 `worker` 是否运行、Redis 是否连通；Beat 每 2 分钟会补偿投递 |
 | 前端 502 | `nginx` 依赖 `frontend` 与 `api`，确认两者已启动 |
+| 构建时 pip 报 `Could not find a version that satisfies…` / `from versions: none` | 拉 PyPI 索引页超时（不是包不存在）。按 2.4 节给 `.env` 设 `AEGIS_PIP_INDEX`（或重跑 `install.sh --cn-mirror`），再 `docker compose build api` |
+| 构建卡在 `npm ci`、日志里是 `registry.npmjs.org` | 同上，设 `AEGIS_NPM_REGISTRY=https://registry.npmmirror.com` 后 `docker compose build frontend` |
+| 想确认实际使用的镜像名 | `docker compose config --images`，应为 `aegis-soc-backend:local` 与 `aegis-soc-frontend:local` |
 | 中文备注显示成 `RFC5737 ç¤ºä¾‹…` 这类乱码 | 初始化 SQL 被 MySQL 客户端按 latin1 读入（双重编码）。仓库已修（`SET NAMES utf8mb4` + `--character-set-client-handshake=OFF`），但初始化脚本只在数据目录为空时执行：`docker compose down -v && docker compose up -d` 重建即可，注意会清空已有数据 |
 
 ## 9. 生产加固建议
@@ -258,6 +283,17 @@ git stash pop          # 自动合并成功就不用管；冲突时手工取舍
 git stash list         # 确认没有残留的 stash
 ```
 
+> 从本版本起，镜像源与镜像名都改成了构建参数（`.env` 里的 `AEGIS_PIP_INDEX` / `AEGIS_NPM_REGISTRY`）+ compose 里的固定 tag，
+> **服务器上不再需要改 Dockerfile 和 compose**。所以这次 `stash pop` 冲突可以整段丢弃（`git checkout -- .` 后重拉），
+> 只需把原来的镜像源值按 2.4 节写进 `.env`：
+>
+> ```bash
+> echo 'AEGIS_PIP_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple' >> .env
+> echo 'AEGIS_NPM_REGISTRY=https://registry.npmmirror.com'          >> .env
+> ```
+>
+> 以后再升级就不会再有本地改动，`git pull --ff-only` 直接快进即可。
+
 **如果 GitHub 连不上**（首次安装用过 `ghfast.top` 的情况很常见），改成下载发行包覆盖，只覆盖代码、不动数据：
 
 ```bash
@@ -288,9 +324,11 @@ docker compose up -d                   # 只重建有变化的容器
 docker compose restart nginx           # 仅当本次改过 deploy/nginx/*.conf
 ```
 
-- `api` / `worker` / `beat` 三个服务共用同一个后端镜像（`image: aegis-soc-backend:local`）时，`build api` 一次即可，`up -d` 会把三者一起换成新镜像；
-- 若 `docker-compose.yml` 里没给它们指定统一 `image:`，改用 `docker compose up -d --build api worker beat frontend`；
+- `api` / `worker` / `beat` 三个服务共用同一后端镜像（`image: aegis-soc-backend:local`），`build api` 一次即可，`up -d` 会把三者一起换成新镜像；
+- `frontend` 用 `aegis-soc-frontend:local`，改过前端（`.vue` / 菜单 / 文案）必须 `build frontend`，仅 `restart` 看不到变化；
 - 构建慢看进度：`docker compose build --progress=plain api`。
+- **第一次升到本版本会重建全部容器**：镜像名从 compose 自动生成的 `aegis-soc-api` 等改成固定 tag，
+  `up -d` 会按新名重建（数据在卷里，不受影响）。旧镜像可用 `docker image prune` 清理。
 
 ### 10.5 验证
 
@@ -311,7 +349,8 @@ docker compose logs --tail=50 api       # 无 traceback、无「等待数据库�
 ```bash
 git log --oneline -5                    # 找到升级前的提交
 # 镜像打标，方便秒回滚（可选但强烈建议）
-docker tag aegis-soc-api aegis-soc-api:backup-$STAMP 2>/dev/null || true
+docker tag aegis-soc-backend:local  aegis-soc-backend:backup-$STAMP 2>/dev/null || true
+docker tag aegis-soc-frontend:local aegis-soc-frontend:backup-$STAMP 2>/dev/null || true
 git checkout <升级前的提交> -- .
 docker compose build api frontend && docker compose up -d
 ```

@@ -15,6 +15,9 @@
 #   sudo bash scripts/install.sh --no-build             # 用已构建镜像启动，不重新构建
 #   sudo bash scripts/install.sh --low-mem              # 2G 内存机型裁剪档（<=2.5G 会自动启用）
 #   sudo bash scripts/install.sh --normal               # 强制用默认配置（4G 及以上）
+#   sudo bash scripts/install.sh --cn-mirror            # 构建走国内源（清华 PyPI + npmmirror）
+#   sudo bash scripts/install.sh --pip-index URL        # 只换 pip 源（内网私服等）
+#   sudo bash scripts/install.sh --npm-registry URL     # 只换 npm 源
 #
 # 重复执行是安全的：已存在 .env 不会覆盖（要重置就先把 .env 改名）。
 
@@ -25,6 +28,9 @@ ADMIN_PASS=""
 INSTALL_DOCKER=0
 NO_BUILD=0
 LOW_MEM=""        # 空 = 按内存自动判断；1 = 强制裁剪；0 = 强制默认
+CN_MIRROR=0       # 1 = 构建走国内源
+PIP_INDEX=""      # 非空则写入 .env 的 AEGIS_PIP_INDEX
+NPM_REGISTRY=""   # 非空则写入 .env 的 AEGIS_NPM_REGISTRY
 
 usage() {
   # 打印文件头注释块（第 2 行到第一个空行）
@@ -39,6 +45,9 @@ while [[ $# -gt 0 ]]; do
     --no-build)        NO_BUILD=1; shift ;;
     --low-mem)         LOW_MEM=1; shift ;;
     --normal)          LOW_MEM=0; shift ;;
+    --cn-mirror)       CN_MIRROR=1; shift ;;
+    --pip-index)       PIP_INDEX="${2:?--pip-index 需要一个 URL}"; shift 2 ;;
+    --npm-registry)    NPM_REGISTRY="${2:?--npm-registry 需要一个 URL}"; shift 2 ;;
     -h|--help)         usage; exit 0 ;;
     *) echo "未知参数: $1（--help 查看用法）" >&2; exit 1 ;;
   esac
@@ -226,6 +235,31 @@ if [[ "$LOW_MEM" -eq 1 ]]; then
   fi
 fi
 
+# 构建源（可选）：写进 .env，由 docker-compose.yml 作为 build-arg 透传给 Dockerfile。
+# 默认留空 = 官方源，境外或直连正常的机器不受影响。
+set_env() {  # set_env KEY VALUE —— 已有则替换，没有则追加
+  local key="$1" val="$2" tmp
+  tmp="$(mktemp)"
+  grep -v "^${key}=" .env > "$tmp" || true
+  printf '%s=%s\n' "$key" "$val" >> "$tmp"
+  cat "$tmp" > .env
+  rm -f "$tmp"
+  chmod 600 .env
+}
+
+if [[ $CN_MIRROR -eq 1 ]]; then
+  PIP_INDEX="${PIP_INDEX:-https://pypi.tuna.tsinghua.edu.cn/simple}"
+  NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmmirror.com}"
+fi
+if [[ -n "$PIP_INDEX" ]]; then
+  set_env AEGIS_PIP_INDEX "$PIP_INDEX"
+  ok "pip 源：$PIP_INDEX（已写入 .env 的 AEGIS_PIP_INDEX）"
+fi
+if [[ -n "$NPM_REGISTRY" ]]; then
+  set_env AEGIS_NPM_REGISTRY "$NPM_REGISTRY"
+  ok "npm 源：$NPM_REGISTRY（已写入 .env 的 AEGIS_NPM_REGISTRY）"
+fi
+
 # ---------- 4. 启动 ----------
 step "构建并启动容器（首次需拉基础镜像 + 编译前端，通常 3~8 分钟）"
 if [[ $NO_BUILD -eq 1 ]]; then
@@ -304,6 +338,8 @@ cat <<EOF
  3) 接 Graylog：把上面的「Graylog 回调」地址填到 Graylog 的 Alert Webhook
  4) 日志巡检 / 人机对话：登录后进「日志巡检 → MCP 配置」填 MCP 地址与 Token
  5) 换 HTTPS：见 docs/deploy-cloud.md 第 4 节
+ 6) 构建卡在 pip / npm（境内网络常见）：重跑时加 --cn-mirror，
+    或改 .env 里的 AEGIS_PIP_INDEX / AEGIS_NPM_REGISTRY，再 docker compose build
 
 常用命令：docker compose ps | logs -f api worker | down | up -d --build
 
