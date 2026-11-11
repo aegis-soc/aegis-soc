@@ -84,16 +84,20 @@ ensure_swap() {
     echo "[!] 根分区仅剩 ${free_mb}MB，不足以建 2G swap，跳过（请自行扩容或加云盘）"
     return
   fi
-  fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+  { fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none 2>/dev/null; } || true
   if [[ ! -f /swapfile ]]; then
     echo "[!] swap 文件创建失败（文件系统可能不支持 fallocate），跳过；请手工建 swap 后再跑"
-    return
+    return 0
   fi
-  chmod 600 /swapfile
-  mkswap /swapfile >/dev/null
-  if ! swapon /swapfile; then
+  chmod 600 /swapfile 2>/dev/null || true
+  if ! mkswap /swapfile >/dev/null 2>&1; then
+    echo "[!] mkswap 失败，跳过 swap（可手工执行 mkswap /swapfile && swapon /swapfile）"
+    rm -f /swapfile
+    return 0
+  fi
+  if ! swapon /swapfile 2>/dev/null; then
     echo "[!] swapon 失败（可能是容器内无特权或已被占用），请手工启用 /swapfile"
-    return
+    return 0
   fi
   grep -q '^/swapfile' /etc/fstab 2>/dev/null || echo '/swapfile none swap sw 0 0' >> /etc/fstab
   sysctl -q -w vm.swappiness=10 2>/dev/null || true
@@ -102,23 +106,51 @@ ensure_swap() {
 
 ensure_docker_logrotate() {
   local f=/etc/docker/daemon.json
-  mkdir -p /etc/docker
+  mkdir -p /etc/docker 2>/dev/null || { echo "[!] 无法创建 /etc/docker，跳过日志轮转"; return 0; }
   if [[ -f "$f" ]]; then
     if grep -q 'max-size' "$f"; then
       ok "Docker 日志轮转已存在，跳过"
     else
-      echo "[!] $f 已存在但未配日志上限，请手动补：\"log-opts\": {\"max-size\": \"10m\", \"max-file\": \"3\"}"
+      echo "[!] $f 已存在但未配日志上限，未改动。可手动补：\"log-opts\": {\"max-size\": \"10m\", \"max-file\": \"3\"}"
     fi
-    return
+    return 0
   fi
-  cat > "$f" <<'JSON'
+
+  # 只加 log-opts，不强制 log-driver：有的机器默认 driver 已被改成 local/journald
+  # 而 journald 不支持 max-size，写进去 dockerd 会直接起不来，所以先探测。
+  local drv
+  drv="$(docker info --format '{{.LoggingDriver}}' 2>/dev/null || echo '')"
+  if [[ -n "$drv" && "$drv" != "json-file" && "$drv" != "local" ]]; then
+    echo "[!] 当前 Docker 日志驱动是 $drv，不支持 max-size 轮转，跳过（不影响安装）"
+    return 0
+  fi
+
+  cat > "$f" <<'JSON' || { echo "[!] 写入 $f 失败，跳过日志轮转"; rm -f "$f"; return 0; }
 {
-  "log-driver": "json-file",
   "log-opts": { "max-size": "10m", "max-file": "3" }
 }
 JSON
-  systemctl restart docker
-  ok "已开启 Docker 日志轮转（10m × 3）"
+
+  # 日志轮转是可选项：重启失败必须回滚，不能把整个安装卡死在这里
+  if systemctl restart docker 2>/dev/null; then
+    ok "已开启 Docker 日志轮转（10m × 3）"
+    return 0
+  fi
+
+  echo "[!] 写入日志轮转配置后 Docker 重启失败，正在回滚该配置"
+  rm -f "$f"
+  systemctl start docker 2>/dev/null || true
+  if docker info >/dev/null 2>&1; then
+    echo "[!] Docker 已恢复运行；日志轮转未启用（不影响安装与使用）"
+    echo "    想排查原因：systemctl status docker --no-pager -l | tail -30"
+    return 0
+  fi
+  die "Docker 未能恢复运行，请先修好再重跑本脚本。排查顺序：
+    journalctl -u docker -n 50 --no-pager
+    systemctl cat docker | head -20        # 看是否有 drop-in 覆盖或 snap 版冲突
+    ls -l /etc/docker/daemon.json          # 确认没有残留配置
+  临时恢复：rm -f /etc/docker/daemon.json && systemctl start docker
+  若 docker 是 snap 装的：snap start docker"
 }
 
 if [[ "$LOW_MEM" -eq 1 ]]; then

@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### 修复：安装脚本因 Docker 日志轮转中断
+
+- **症状**：2G 机型上一键安装执行到「开启 Docker 日志轮转」后报 `Job for docker.service failed because the control process exited with error code` 并整体退出，服务没起来
+- **原因**：脚本为了 `max-size` 轮转写入 `/etc/docker/daemon.json`（含 `log-driver: json-file`），而部分主机默认日志驱动是 `journald`，journald 不支持 `max-size`，dockerd 校验失败无法启动；且 `set -Eeuo pipefail` 下 `systemctl restart` 失败直接终止脚本
+- **修复**：① 写配置前先 `docker info --format '{{.LoggingDriver}}'` 探测，非 `json-file` / `local` 直接跳过并说明原因；② 配置只写 `log-opts`，不再强制 `log-driver`，避免覆盖主机既有设置；③ 重启失败自动删除刚写的 `daemon.json` 并 `systemctl start docker`，确认守护进程恢复后**降级继续安装**（日志轮转是可选优化，不该阻塞部署）；④ 恢复失败才终止，并打印 `journalctl -u docker` 等排查命令
+- **同时加固 swap 步骤**：`mkswap` / `swapon` / `fallocate` 失败均只提示不中断（之前 `mkswap` 失败同样会让脚本退出）
+
 ### 一键安装（Linux / Docker）
 
 - **新增 `scripts/install.sh`**：一条命令完成「检查 Docker → 生成随机密钥的 `.env` → 构建并启动 → 轮询 `/api/healthz` → 打印访问地址、初始口令、Graylog 回调地址」；支持 `--port` / `--admin-password` / `--install-docker` / `--no-build`，可重复执行（已存在的 `.env` 不覆盖）
