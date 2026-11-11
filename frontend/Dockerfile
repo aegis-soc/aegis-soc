@@ -1,4 +1,4 @@
-FROM node:20-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /app
 
 # 构建参数：默认留空 = 官方 registry。境内构建可在 .env 里设 AEGIS_NPM_REGISTRY，
