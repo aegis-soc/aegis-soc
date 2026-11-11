@@ -198,6 +198,7 @@ cd backend && pytest -q
 | 告警 accepted 但没有任务 | 依次检查：熔断开关、白名单命中、IP 是否为内网/保留地址、策略置信度与阈值、设备能力矩阵 |
 | 任务一直 PENDING | 检查 `worker` 是否运行、Redis 是否连通；Beat 每 2 分钟会补偿投递 |
 | 前端 502 | `nginx` 依赖 `frontend` 与 `api`，确认两者已启动 |
+| 中文备注显示成 `RFC5737 ç¤ºä¾‹…` 这类乱码 | 初始化 SQL 被 MySQL 客户端按 latin1 读入（双重编码）。仓库已修（`SET NAMES utf8mb4` + `--character-set-client-handshake=OFF`），但初始化脚本只在数据目录为空时执行：`docker compose down -v && docker compose up -d` 重建即可，注意会清空已有数据 |
 
 ## 9. 生产加固建议
 

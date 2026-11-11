@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### 修复：中文备注显示为乱码（UTF-8 被按 latin1 读入，双重编码）
+
+- **症状**：白名单 IP 的备注在页面上显示成 `RFC5737 ç¤ºä¾‹ç½‘æ®µ…`，库里存的也是这串乱码，接口与前端都只是如实展示
+- **原因**：`docker-entrypoint-initdb.d` 里的 `sql/init.sql` / `sql/seed.sql` 由 MySQL 客户端按连接字符集读取，容器默认 `character-set-client-handshake` 生效、客户端握手拿到的是 latin1，于是文件里的 UTF-8 字节被当成 latin1 再转一次 UTF-8，中文就成了双重编码
+- **修复**：① 两个 SQL 脚本首行加 `SET NAMES utf8mb4;`，不依赖客户端默认值；② `docker-compose.yml` 的 mysql 启动参数加 `--character-set-client-handshake=OFF`，让服务端强制 utf8mb4，第三方客户端（命令行 `mysql`、备份恢复）也不会再按 latin1 读
+- **生效方式**：初始化脚本只在 MySQL 数据目录为空时执行。已部署的实例需要 `docker compose down -v && docker compose up -d` 重建（会清库，`admin` 口令回到 `.env` 里的值），或对新库重新导入种子数据
+- **文档**：`docs/install.md` 第 8 节常见问题补一条（现象 → 原因 → 重建命令）
+
 ### 修复：安装脚本因 Docker 日志轮转中断
 
 - **症状**：2G 机型上一键安装执行到「开启 Docker 日志轮转」后报 `Job for docker.service failed because the control process exited with error code` 并整体退出，服务没起来
