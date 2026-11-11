@@ -127,6 +127,8 @@ cp .env.example .env
 docker compose up -d
 ```
 
+> 🚀 **一条命令也行**（Linux）：`sudo bash scripts/install.sh`——自动生成随机密钥的 `.env`、构建、等待健康检查通过，最后打印访问地址与初始口令。支持 `--port`、`--admin-password`、`--install-docker`、`--no-build`。
+
 | 项 | 值 |
 |---|---|
 | 访问地址 | `http://127.0.0.1:8080` |
@@ -164,7 +166,7 @@ aegis-soc/
 │   └── tests/            # 单元测试 + 端到端 mock 链路
 ├── frontend/             # Vue3 + Element Plus + Vite
 ├── deploy/               # nginx.conf / my.cnf
-├── scripts/              # smoke_test.py（部署后一键冒烟验收，仅标准库）
+├── scripts/              # install.sh（一键部署）/ smoke_test.py（部署后冒烟验收，仅标准库）
 ├── docs/                 # install / deploy-cloud / verify / graylog / plugin-dev / api / security / architecture / blacklist-history / geoip / ai-inspection / graylog-patrol / chat-nlq
 ├── .github/workflows/    # ci.yml（编译+测试+构建+编排校验）、release.yml（tag 触发多架构镜像发布）
 ├── docker-compose.yml

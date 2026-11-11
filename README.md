@@ -127,6 +127,8 @@ cp .env.example .env
 docker compose up -d
 ```
 
+> 🚀 **Or one command** (Linux): `sudo bash scripts/install.sh` — generates `.env` with random secrets, builds, waits for health, then prints the URL and initial password. Options: `--port`, `--admin-password`, `--install-docker`, `--no-build`.
+
 | Item | Value |
 |---|---|
 | Web console | `http://127.0.0.1:8080` |
@@ -164,7 +166,7 @@ aegis-soc/
 │   └── tests/            # unit tests + end-to-end mock chain
 ├── frontend/             # Vue3 + Element Plus + Vite
 ├── deploy/               # nginx.conf / my.cnf
-├── scripts/              # smoke_test.py (post-deploy smoke checks, stdlib only)
+├── scripts/              # install.sh (one-command deploy) / smoke_test.py (post-deploy smoke checks)
 ├── docs/                 # install / deploy-cloud / verify / graylog / plugin-dev / api / security / architecture / blacklist-history / geoip / ai-inspection / graylog-patrol / chat-nlq
 ├── .github/workflows/    # ci.yml (compile+test+build+compose lint), release.yml (tag-triggered multi-arch images)
 ├── docker-compose.yml

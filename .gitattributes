@@ -1,0 +1,15 @@
+# 换行统一：容器与 Linux 主机直接读取这些文件，不能带 CRLF
+# 背景：.env 的值若以 \r 结尾，DATABASE_URL / 口令会被污染；
+#       Makefile 的 recipe 带 \r 会报 "command not found"；
+#       nginx / mysql 容器里挂载的配置同样按 LF 更稳妥。
+# 只约束运行期文件，Python / Vue / 文档保持各自的换行不变，避免整仓 diff。
+
+.env.example             text eol=lf
+docker-compose.yml       text eol=lf
+docker-compose-demo.yml  text eol=lf
+Makefile                 text eol=lf
+Dockerfile               text eol=lf
+
+*.sh                     text eol=lf
+*.conf                   text eol=lf
+*.sql                    text eol=lf

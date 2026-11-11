@@ -15,6 +15,28 @@
 
 ## 2. 快速部署
 
+### 2.1 一键安装（推荐）
+
+```bash
+git clone https://github.com/aegis-soc/aegis-soc.git
+cd aegis-soc
+sudo bash scripts/install.sh          # 默认对外 8080
+```
+
+脚本按顺序做五件事：检查 Docker / Compose → 用随机值生成 `.env`（JWT 密钥、数据库口令、Webhook 密钥、管理员口令，文件权限 600）→ `docker compose up -d --build` → 轮询 `/api/healthz` 直到就绪 → 打印访问地址、初始口令和 Graylog 回调地址。
+
+| 参数 | 作用 |
+|---|---|
+| `--port 80` | 改对外端口（同时写入 `FRONTEND_PORT`） |
+| `--admin-password 'Xx@123456'` | 指定初始管理员口令，不使用随机值 |
+| `--install-docker` | 主机没装 Docker 时用官方脚本自动安装 |
+| `--no-build` | 用已有镜像启动，不重新构建 |
+
+> 可重复执行：已存在的 `.env` 不会被覆盖，脚本只会把其中的 CRLF 转成 LF（`.env` 里的值带 `\r` 会导致 `DATABASE_URL` 解析失败、api 起不来）。
+> 忘记初始口令时：`grep BOOTSTRAP_ADMIN_PASSWORD .env`。
+
+### 2.2 手动安装（分步）
+
 ```bash
 git clone https://github.com/aegis-soc/aegis-soc.git
 cd aegis-soc
@@ -49,7 +71,7 @@ docker compose logs -f api # 首次启动会执行 bootstrap 并打印完成日�
 > 一条命令跑完 18 项闭环检查（界面 / 告警 / 策略 / 下发 / 审计 / 熔断），
 > 详见 [verify.md](verify.md)。
 
-### 2.1 可选：使用预构建镜像（不本地构建）
+### 2.3 可选：使用预构建镜像（不本地构建）
 
 仓库打了 `v*` tag 后，GitHub Actions 会自动构建多架构镜像（`linux/amd64` + `linux/arm64`）并推送到 ghcr.io，
 适合**不想在云主机上跑 Vite 构建**的场景：

@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### 一键安装（Linux / Docker）
+
+- **新增 `scripts/install.sh`**：一条命令完成「检查 Docker → 生成随机密钥的 `.env` → 构建并启动 → 轮询 `/api/healthz` → 打印访问地址、初始口令、Graylog 回调地址」；支持 `--port` / `--admin-password` / `--install-docker` / `--no-build`，可重复执行（已存在的 `.env` 不覆盖）
+- **修复 CRLF 部署坑**：`.env.example`、`docker-compose.yml`、`Makefile`、`deploy/nginx/nginx.conf`、`sql/*.sql` 原先以 CRLF 入库，Linux 上克隆后 `.env` 的值会带 `\r`，导致 `DATABASE_URL` 解析失败、api 反复重启；新增 `.gitattributes` 强制这些运行期文件使用 LF，脚本额外做一次去 CR 兜底
+- **修复反代超时**：nginx `/api/` 的 `proxy_read_timeout` 由 60s 放宽到 180s——人机对话与日志巡检会同步等 MCP，单流 30s × 三流会超过 60s 被 504
+- **文档**：`docs/install.md` 第 2 节拆为 2.1 一键安装 / 2.2 手动分步 / 2.3 预构建镜像；中英 README 快速部署各补一条命令说明
+
 ### 人机对话（自然语言查询）
 
 - **新增「人机对话」主菜单**：中文提问自动路由——查平台数据（黑名单 / 告警 / 下发 / 设备）走 MySQL，查攻击日志走 Graylog MCP 三流；返回结论 + 明细表 + 柱图 + 编译后的查询
