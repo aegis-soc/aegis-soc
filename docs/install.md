@@ -31,6 +31,10 @@ sudo bash scripts/install.sh          # 默认对外 8080
 | `--admin-password 'Xx@123456'` | 指定初始管理员口令，不使用随机值 |
 | `--install-docker` | 主机没装 Docker 时用官方脚本自动安装 |
 | `--no-build` | 用已有镜像启动，不重新构建 |
+| `--low-mem` | 强制启用 2G 裁剪档（内存 ≤2.5 GB 时会自动启用，无需手工指定） |
+| `--normal` | 强制用默认 4G 档，不用裁剪 |
+
+> **2 GB 机型**：脚本检测到内存 ≤ 2.5 GB 会自动做四件事——加 2 GB swap、开启 Docker 日志轮转、挂上 `docker-compose.2g.yml`（MySQL 缓冲池 128M / api 单 worker / celery 并发 1 / Redis 限 96M）、把巡检节奏放到 900 秒、单次批量降到 800 条。仍建议尽快升配到 4 GB，细节见 [deploy-cloud.md](deploy-cloud.md) 第 7 节。
 
 > 可重复执行：已存在的 `.env` 不会被覆盖，脚本只会把其中的 CRLF 转成 LF（`.env` 里的值带 `\r` 会导致 `DATABASE_URL` 解析失败、api 起不来）。
 > 忘记初始口令时：`grep BOOTSTRAP_ADMIN_PASSWORD .env`。

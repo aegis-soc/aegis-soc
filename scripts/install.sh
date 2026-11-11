@@ -13,6 +13,8 @@
 #   sudo bash scripts/install.sh --admin-password 'Xx@123456'   # 指定初始管理员口令
 #   sudo bash scripts/install.sh --install-docker       # 未装 Docker 时自动安装（get.docker.com）
 #   sudo bash scripts/install.sh --no-build             # 用已构建镜像启动，不重新构建
+#   sudo bash scripts/install.sh --low-mem              # 2G 内存机型裁剪档（<=2.5G 会自动启用）
+#   sudo bash scripts/install.sh --normal               # 强制用默认配置（4G 及以上）
 #
 # 重复执行是安全的：已存在 .env 不会覆盖（要重置就先把 .env 改名）。
 
@@ -22,6 +24,7 @@ PORT=8080
 ADMIN_PASS=""
 INSTALL_DOCKER=0
 NO_BUILD=0
+LOW_MEM=""        # 空 = 按内存自动判断；1 = 强制裁剪；0 = 强制默认
 
 usage() {
   # 打印文件头注释块（第 2 行到第一个空行）
@@ -34,6 +37,8 @@ while [[ $# -gt 0 ]]; do
     --admin-password)  ADMIN_PASS="${2:?--admin-password 需要一个口令}"; shift 2 ;;
     --install-docker)  INSTALL_DOCKER=1; shift ;;
     --no-build)        NO_BUILD=1; shift ;;
+    --low-mem)         LOW_MEM=1; shift ;;
+    --normal)          LOW_MEM=0; shift ;;
     -h|--help)         usage; exit 0 ;;
     *) echo "未知参数: $1（--help 查看用法）" >&2; exit 1 ;;
   esac
@@ -62,7 +67,69 @@ docker compose version >/dev/null 2>&1 || die "Docker Compose v2 不可用（需
 docker info >/dev/null 2>&1 || die "无法连接 Docker 守护进程。当前用户没权限时：sudo usermod -aG docker \$USER 后重新登录，或用 sudo 执行本脚本"
 ok "Docker $(docker version --format '{{.Server.Version}}') / Compose $(docker compose version --format '{{.Version}}')"
 
-# ---------- 2. 生成 .env ----------
+# ---------- 2. 低内存机型适配（swap / 日志轮转 / 裁剪档） ----------
+MEM_MB="$(awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0)"
+if [[ -z "$LOW_MEM" ]]; then
+  if [[ "${MEM_MB:-0}" -gt 0 && "${MEM_MB:-0}" -lt 2500 ]]; then LOW_MEM=1; else LOW_MEM=0; fi
+fi
+
+ensure_swap() {
+  if swapon --show 2>/dev/null | grep -q .; then
+    ok "已有 swap，跳过（$(swapon --show=NAME,SIZE --noheadings 2>/dev/null | tr '\n' ' ')）"
+    return
+  fi
+  local free_mb
+  free_mb="$(df -Pm / | awk 'NR==2 {print $4}')"
+  if [[ "${free_mb:-0}" -lt 3072 ]]; then
+    echo "[!] 根分区仅剩 ${free_mb}MB，不足以建 2G swap，跳过（请自行扩容或加云盘）"
+    return
+  fi
+  fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+  if [[ ! -f /swapfile ]]; then
+    echo "[!] swap 文件创建失败（文件系统可能不支持 fallocate），跳过；请手工建 swap 后再跑"
+    return
+  fi
+  chmod 600 /swapfile
+  mkswap /swapfile >/dev/null
+  if ! swapon /swapfile; then
+    echo "[!] swapon 失败（可能是容器内无特权或已被占用），请手工启用 /swapfile"
+    return
+  fi
+  grep -q '^/swapfile' /etc/fstab 2>/dev/null || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  sysctl -q -w vm.swappiness=10 2>/dev/null || true
+  ok "已创建 2G swap（swappiness=10）"
+}
+
+ensure_docker_logrotate() {
+  local f=/etc/docker/daemon.json
+  mkdir -p /etc/docker
+  if [[ -f "$f" ]]; then
+    if grep -q 'max-size' "$f"; then
+      ok "Docker 日志轮转已存在，跳过"
+    else
+      echo "[!] $f 已存在但未配日志上限，请手动补：\"log-opts\": {\"max-size\": \"10m\", \"max-file\": \"3\"}"
+    fi
+    return
+  fi
+  cat > "$f" <<'JSON'
+{
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "10m", "max-file": "3" }
+}
+JSON
+  systemctl restart docker
+  ok "已开启 Docker 日志轮转（10m × 3）"
+}
+
+if [[ "$LOW_MEM" -eq 1 ]]; then
+  step "检测到 ${MEM_MB}MB 内存，启用 2G 裁剪档"
+  ensure_swap
+  ensure_docker_logrotate
+else
+  step "内存 ${MEM_MB}MB，使用默认配置（4G 档）"
+fi
+
+# ---------- 3. 生成 .env ----------
 rand_hex() {
   local bytes="$1"
   if command -v openssl >/dev/null 2>&1; then
@@ -114,7 +181,20 @@ PORT="$(read_env FRONTEND_PORT || true)"; PORT="${PORT:-8080}"
 WEBHOOK="$(read_env GRAYLOG_WEBHOOK_SECRET || true)"
 ADMIN_PASS="$(read_env BOOTSTRAP_ADMIN_PASSWORD || true)"
 
-# ---------- 3. 启动 ----------
+if [[ "$LOW_MEM" -eq 1 ]]; then
+  # 巡检每次要拉一批日志进内存，2G 上把节奏和批量都收紧
+  sed -i \
+    -e 's|^PATROL_INTERVAL_SECONDS=.*|PATROL_INTERVAL_SECONDS=900|' \
+    -e 's|^PATROL_MAX_RECORDS=.*|PATROL_MAX_RECORDS=800|' .env
+  if [[ -f docker-compose.2g.yml ]]; then
+    cp docker-compose.2g.yml docker-compose.override.yml
+    ok "已挂上裁剪档 docker-compose.override.yml（巡检 900s / 单次 800 条）"
+  else
+    echo "[!] 缺少 docker-compose.2g.yml，未启用裁剪档"
+  fi
+fi
+
+# ---------- 4. 启动 ----------
 step "构建并启动容器（首次需拉基础镜像 + 编译前端，通常 3~8 分钟）"
 if [[ $NO_BUILD -eq 1 ]]; then
   docker compose up -d || die "启动失败。常见原因：镜像拉不下来（国内主机请给 Docker 配加速器，见文末提示）"
@@ -152,9 +232,17 @@ if [[ $READY -eq 0 ]]; then
 fi
 ok "健康检查通过"
 
-# ---------- 4. 输出 ----------
+# ---------- 5. 输出 ----------
 LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 LAN_IP="${LAN_IP:-<服务器IP>}"
+if [[ "$LOW_MEM" -eq 1 ]]; then
+  MODE_NOTE="2G 裁剪档（2G swap + 容器内存上限 + 巡检 900s / 单次 800 条）
+               docker stats --no-stream   看实时占用
+               dmesg | grep -i oom        查是否被杀过
+               升配到 4G 后：rm docker-compose.override.yml && docker compose up -d --build"
+else
+  MODE_NOTE="默认（4G 档）"
+fi
 cat <<EOF
 
 ============================================================
@@ -168,6 +256,8 @@ cat <<EOF
  初始账号      admin
  初始口令      ${ADMIN_PASS}
               （首次登录会强制改密）
+
+ 运行模式      ${MODE_NOTE}
 
  配置与口令都写在 $(pwd)/.env（权限 600），请自行备份，勿提交仓库。
 ============================================================

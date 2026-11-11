@@ -127,7 +127,7 @@ cp .env.example .env
 docker compose up -d
 ```
 
-> 🚀 **一条命令也行**（Linux）：`sudo bash scripts/install.sh`——自动生成随机密钥的 `.env`、构建、等待健康检查通过，最后打印访问地址与初始口令。支持 `--port`、`--admin-password`、`--install-docker`、`--no-build`。
+> 🚀 **一条命令也行**（Linux）：`sudo bash scripts/install.sh`——自动生成随机密钥的 `.env`、构建、等待健康检查通过，最后打印访问地址与初始口令。支持 `--port`、`--admin-password`、`--install-docker`、`--no-build`；内存 ≤2.5 GB 时自动切 2G 裁剪档（加 swap、限容器内存、巡检降频到 15 分钟）。
 
 | 项 | 值 |
 |---|---|

@@ -186,9 +186,24 @@ DELETE FROM operation_audit WHERE created_at < NOW() - INTERVAL 180 DAY LIMIT 50
 
 ---
 
-## 7. 2G 机型裁剪参数（应急参考，非受支持）
+## 7. 2G 机型裁剪档（应急参考，非受支持）
 
-仅当你坚持在 2 GB 内存上部署时，**手动**调整以下参数（默认配置已按 4G 调优，请勿在 4G 上照改）：
+仓库已内置裁剪档，**不用手工改主文件**：
+
+```bash
+sudo bash scripts/install.sh --low-mem     # 内存 ≤2.5G 时自动启用，无需加参数
+```
+
+脚本会加 2 GB swap、开启 Docker 日志轮转、把 [`docker-compose.2g.yml`](../docker-compose.2g.yml) 复制成 `docker-compose.override.yml`（compose 自动叠加），并把 `PATROL_INTERVAL_SECONDS` 调到 900、`PATROL_MAX_RECORDS` 降到 800。
+
+也可以手工只做裁剪（不加 swap）：
+
+```bash
+cp docker-compose.2g.yml docker-compose.override.yml
+docker compose up -d --build
+```
+
+裁剪档具体改了什么（默认配置已按 4G 调优，**4G 及以上请勿套用**）：
 
 | 位置 | 默认 | 2G 建议值 |
 |---|---|---|
@@ -197,7 +212,11 @@ DELETE FROM operation_audit WHERE created_at < NOW() - INTERVAL 180 DAY LIMIT 50
 | `docker-compose.yml` → `api.command` | `--workers 2` | `--workers 1` |
 | `docker-compose.yml` → `redis.command` | 无内存上限 | 追加 `--maxmemory 128mb --maxmemory-policy noeviction`，去掉 `--appendonly yes` |
 
-同时建议给各容器加 `mem_limit`，并保留 §2 的 2G swap 兜底。
+裁剪档已按上表改好 `command`，并给每个容器加了 `mem_limit`（mysql 700M / worker 448M / api 384M / beat 192M / redis 128M / frontend 64M / nginx 48M）。
+
+> `mem_limit` 是上限不是预留；若某容器反复以 `137` 退出（`docker inspect` 里 `OOMKilled=true`），说明该服务确实需要更多内存 —— 单独调大该值，或直接升配到 4 GB。
+> 回到默认档：`rm docker-compose.override.yml && docker compose up -d --build`。
+> 2 GB 上仍建议保留 §2 的 swap 兜底与 `docker stats --no-stream` 定期观察。
 
 ---
 

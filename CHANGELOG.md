@@ -11,6 +11,12 @@
 - **修复反代超时**：nginx `/api/` 的 `proxy_read_timeout` 由 60s 放宽到 180s——人机对话与日志巡检会同步等 MCP，单流 30s × 三流会超过 60s 被 504
 - **文档**：`docs/install.md` 第 2 节拆为 2.1 一键安装 / 2.2 手动分步 / 2.3 预构建镜像；中英 README 快速部署各补一条命令说明
 
+### 2 GB 机型裁剪档
+
+- **新增 `docker-compose.2g.yml`**：MySQL 缓冲池 256M→128M、关 `performance_schema`、连接数 300→100；api 单 worker；celery 并发 4→1 且每 100 任务回收子进程；Redis 限 96M 去 AOF；7 个容器全部加 `mem_limit`
+- **`install.sh` 自动适配**：检测到内存 ≤2.5 GB 时自动加 2 GB swap、开启 Docker 日志轮转、把裁剪档复制成 `docker-compose.override.yml`、巡检节奏 300s→900s、单次批量 2000→800；`--low-mem` 强制启用，`--normal` 强制默认
+- **失败可降级**：swap 文件创建失败 / `swapon` 失败都只提示不中断；`docker-compose.override.yml` 已加入 `.gitignore`
+- **文档**：`docs/deploy-cloud.md` 第 7 节改为「用内置裁剪档」并给出各容器内存上限与 `OOMKilled` 判断方法；`docs/install.md` 补充 `--low-mem` / `--normal` 说明
 ### 人机对话（自然语言查询）
 
 - **新增「人机对话」主菜单**：中文提问自动路由——查平台数据（黑名单 / 告警 / 下发 / 设备）走 MySQL，查攻击日志走 Graylog MCP 三流；返回结论 + 明细表 + 柱图 + 编译后的查询

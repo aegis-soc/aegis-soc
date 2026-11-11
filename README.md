@@ -127,7 +127,7 @@ cp .env.example .env
 docker compose up -d
 ```
 
-> 🚀 **Or one command** (Linux): `sudo bash scripts/install.sh` — generates `.env` with random secrets, builds, waits for health, then prints the URL and initial password. Options: `--port`, `--admin-password`, `--install-docker`, `--no-build`.
+> 🚀 **Or one command** (Linux): `sudo bash scripts/install.sh` — generates `.env` with random secrets, builds, waits for health, then prints the URL and initial password. Options: `--port`, `--admin-password`, `--install-docker`, `--no-build`. On hosts with ≤2.5 GB RAM it automatically switches to a 2 GB profile (adds swap, caps container memory, slows the log patrol to 15 min).
 
 | Item | Value |
 |---|---|
