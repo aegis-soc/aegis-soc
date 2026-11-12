@@ -11,6 +11,10 @@ export const store = reactive({
   username: localStorage.getItem(USER_KEY) || '',
   mustChange: localStorage.getItem(CHANGE_KEY) === '1',
   killSwitch: false,
+  // 版本信息来自 /system/status，不在前端写死，避免两处版本号打架
+  version: '',
+  commit: '',
+  buildTime: '',
 })
 
 export function setAuth(data) {

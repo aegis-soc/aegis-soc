@@ -260,6 +260,20 @@ if [[ -n "$NPM_REGISTRY" ]]; then
   ok "npm 源：$NPM_REGISTRY（已写入 .env 的 AEGIS_NPM_REGISTRY）"
 fi
 
+# 版本信息：镜像里没有 .git，构建时把提交号注入进去，
+# 页面「系统设置 → 运行状态」才能显示真实版本而不是 unknown
+if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
+  COMMIT="$(git rev-parse --short HEAD 2>/dev/null || true)"
+  TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+  if [[ -n "$COMMIT" ]]; then
+    set_env AEGIS_GIT_COMMIT "$COMMIT"
+    ok "版本信息：${COMMIT}${TAG:+（$TAG）}"
+  fi
+  if [[ -n "$TAG" ]]; then
+    set_env AEGIS_GIT_TAG "$TAG"
+  fi
+fi
+
 # ---------- 4. 启动 ----------
 step "构建并启动容器（首次需拉基础镜像 + 编译前端，通常 3~8 分钟）"
 if [[ $NO_BUILD -eq 1 ]]; then

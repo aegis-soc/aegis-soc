@@ -367,11 +367,31 @@ class SystemSettingsIn(BaseModel):
 
 class SystemStatusOut(BaseModel):
     version: str
+    commit: str
+    build_time: str
     app_env: str
     kill_switch: bool
     task_eager: bool
     database: str
     plugin_count: int
+
+
+class UpdateCheckOut(BaseModel):
+    """检查更新结果。只读：不含任何升级动作，也不代表系统会自己去下载。"""
+
+    current_version: str
+    current_commit: str
+    build_time: str
+    enabled: bool
+    latest_version: str
+    published_at: str
+    html_url: str
+    notes: str
+    notes_truncated: bool
+    has_update: bool
+    cached: bool
+    checked_at: str
+    error: str
 
 
 class InspectionCheck(BaseModel):

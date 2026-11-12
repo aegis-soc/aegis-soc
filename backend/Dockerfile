@@ -14,6 +14,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 ARG PIP_INDEX_URL=
 ARG PIP_TRUSTED_HOST=
 
+# 版本信息：提交号由 install.sh / CI 通过构建参数注入（镜像里没有 .git）。
+# 构建时间不放进 ARG——那会让每次构建都变一个参数、缓存全失效；
+# 改成写一个文件，容器里直接读，见 app/services/version_info.py。
+ARG GIT_COMMIT=
+ARG GIT_TAG=
+ENV AEGIS_GIT_COMMIT=$GIT_COMMIT \
+    AEGIS_GIT_TAG=$GIT_TAG
+
 WORKDIR /app
 
 COPY requirements.txt ./
@@ -27,6 +35,9 @@ RUN set -eu; \
 COPY app ./app
 COPY plugins ./plugins
 COPY workers ./workers
+
+# 构建时间落在镜像里，页面「运行状态」据此显示
+RUN date -u +%Y-%m-%dT%H:%M:%SZ > /app/.build_time && cat /app/.build_time
 
 EXPOSE 8000
 

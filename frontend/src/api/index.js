@@ -112,6 +112,7 @@ export const api = {
   users: () => http.get('/system/users'),
   systemSettings: () => http.get('/system/settings'),
   saveSystemSettings: (data) => http.put('/system/settings', data),
+  checkUpdate: (force = false) => http.get('/system/update/check', { params: { force: force ? 1 : 0 } }),
 }
 
 export default api

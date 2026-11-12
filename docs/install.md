@@ -362,3 +362,45 @@ docker compose exec -T mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" aegis_
 ```
 
 > 升级不会碰 `mysql-data` 卷，也不会覆盖 `.env`；**只有 `docker compose down -v` 才清数据**，升级时不要加 `-v`。
+
+## 11. 版本显示与「检查更新」（只读）
+
+页面有两处能看到版本，数据都来自 `GET /api/v1/system/status`，前端不写死：
+
+| 位置 | 显示内容 |
+|---|---|
+| 左侧栏底部 | `v1.0.0 · fdaa1eb`（悬停看构建时间） |
+| 系统设置 → 标题旁 / 版本与升级卡片 | 版本、代码提交、构建时间 |
+
+**提交号从哪来**：镜像里没有 `.git`，所以由构建参数注入。`scripts/install.sh` 每次执行会读
+`git rev-parse --short HEAD` 写进 `.env` 的 `AEGIS_GIT_COMMIT`，再由 compose 传给 `build.args`。
+手工构建时想带上提交号：
+
+```bash
+AEGIS_GIT_COMMIT=$(git rev-parse --short HEAD) docker compose build api
+```
+
+源码直跑（`uvicorn app.main:app`）时不需要任何配置，`version_info` 会自己读 `.git`；
+构建时间则取镜像里 `/app/.build_time`（Dockerfile 构建时写入）或源文件修改时间。
+
+**检查更新**在「系统设置 → 版本与升级」，行为边界：
+
+- 只调用一次 `https://api.github.com/repos/<repo>/releases/latest`，超时 5 秒，结果缓存 10 分钟；
+- 失败（断网、403 限流、404 无 Release）只显示提示文案，不影响页面其它功能；
+- 有新版时给出更新说明和**手工升级命令**（复制即用），按钮不会下载、不会重建容器、不写数据库；
+- 仅系统管理员（`system:*`）可触发；运营/审计角色点不动。
+
+国内直连不通时，改 `.env` 后重建 api 即可走镜像：
+
+```bash
+echo 'AEGIS_GITHUB_API_BASE=https://ghfast.top/https://api.github.com' >> .env
+docker compose up -d api      # 环境变量变了，必须重建容器
+```
+
+相关开关：`AEGIS_UPDATE_CHECK`（默认 true，设 false 彻底关闭）、`AEGIS_GITHUB_REPO`、
+`AEGIS_UPDATE_CHECK_TIMEOUT`、`AEGIS_UPDATE_CACHE_TTL`。
+
+> **为什么没有「一键升级」按钮**：要由 web 进程执行 `docker compose build && up -d`，
+> 就得把 `/var/run/docker.sock` 挂进容器——那是宿主机 root 等价权限，一旦接口被绕过，
+> 影响面远超「升级失败」。目前的做法是「页面告诉你有没有新版 + 给出命令」，
+> 执行的最后一公里由人在服务器上完成。若后续要做，需独立 `updater` 容器 + 专项评审。

@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+### 新增：系统设置显示版本号 + 只读「检查更新」（一期 / 二期）
+
+- **版本单一来源**：仍以 `backend/app/__init__.py` 的 `__version__` 为准，`/system/status` 新增 `commit`、`build_time`；前端侧边栏原本写死的 `v1.0.0` 改为读接口
+- **提交号**：镜像里没有 `.git`，改由 `AEGIS_GIT_COMMIT` 构建参数注入——`install.sh` 写入 `.env`，compose 传 `build.args`；源码直跑时 `version_info` 自己读 `.git`，容器里没有 git 也不会报错
+- **构建时间**：Dockerfile 构建时写 `/app/.build_time`，不用 ARG（那会让每次构建都变参数、层缓存全失效）
+- **界面**：侧边栏底部 `v1.0.0 · <commit>`（悬停看构建时间）；系统设置标题旁加版本标签，新增「版本与升级」卡片（版本 / 提交 / 构建时间 / 检查更新）
+- **`GET /system/update/check`**：只读查询 GitHub Releases，5 秒超时、10 分钟缓存、403/404/断网一律降级为提示文案；`AEGIS_GITHUB_API_BASE` 可指向镜像（如 ghfast），仅 `system:*` 可调用
+- **有新版时**只展示更新说明 + 可复制的手工升级命令，**不下载、不重建容器、不写数据库**
+- **刻意不做一键升级**：执行升级需要把 `docker.sock` 交给 web 进程，等于宿主机 root；要做得另立 `updater` 容器并专项评审，本轮不引入
+- **测试**：`tests/test_update_check.py` 21 项（semver 解析、缓存命中与强制刷新、断网/403/404、开关关闭、长说明截断、运营账号 403）；全量 251 passed
+
 ### 变更：镜像源与镜像名改为构建参数（不再需要改 Dockerfile / compose）
 
 以前境内构建要在服务器上直接改 `backend/Dockerfile`、`frontend/Dockerfile` 和 `docker-compose.yml`，

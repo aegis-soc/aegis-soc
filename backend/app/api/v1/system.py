@@ -1,4 +1,4 @@
-"""系统设置：全局熔断开关、运行状态、用户列表、运行期配置。"""
+"""系统设置：全局熔断开关、运行状态、用户列表、运行期配置、版本与更新检查。"""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
@@ -11,9 +11,16 @@ from app.config import settings
 from app.database import get_db
 from app.deps import require_perms
 from app.models import SystemUser
-from app.schemas import KillSwitchIn, SystemSettingsIn, SystemStatusOut, UserOut
-from app.services import sysconf
+from app.schemas import (
+    KillSwitchIn,
+    SystemSettingsIn,
+    SystemStatusOut,
+    UpdateCheckOut,
+    UserOut,
+)
+from app.services import sysconf, update_check
 from app.services.audit import write_audit
+from app.services.version_info import get_version_info
 from plugins import registry
 
 router = APIRouter(prefix="/system", tags=["系统"])
@@ -21,9 +28,12 @@ router = APIRouter(prefix="/system", tags=["系统"])
 
 @router.get("/status")
 def system_status(db: Session = Depends(get_db)):
+    info = get_version_info()
     return ok(
         SystemStatusOut(
             version=__version__,
+            commit=info["commit"],
+            build_time=info["build_time"],
             app_env=settings.app_env,
             kill_switch=cache.kill_switch,
             task_eager=settings.task_eager,
@@ -31,6 +41,12 @@ def system_status(db: Session = Depends(get_db)):
             plugin_count=len(registry.list_manifests()),
         ).model_dump()
     )
+
+
+@router.get("/update/check")
+def check_update(force: bool = False, _=Depends(require_perms("system:*"))):
+    """只读：问一次 GitHub 有没有新版。不下载、不部署、不改任何状态。"""
+    return ok(UpdateCheckOut(**update_check.check(force=force)).model_dump())
 
 
 @router.get("/kill-switch")

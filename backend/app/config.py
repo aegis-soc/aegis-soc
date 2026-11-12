@@ -66,6 +66,12 @@ class Settings:
     patrol_max_records: int
     patrol_mcp_timeout: float
     patrol_repeat_hours: int          # 同一 IP 在该时间窗内重复命中标记为 repeat
+    # 版本与更新检查（只读：只查有没有新版，绝不下载或升级）
+    update_check_enabled: bool
+    github_repo: str
+    github_api_base: str              # 可换镜像，如 https://ghfast.top/https://api.github.com
+    update_check_timeout: float
+    update_cache_ttl: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -119,6 +125,12 @@ class Settings:
             patrol_max_records=_int("PATROL_MAX_RECORDS", 2000),
             patrol_mcp_timeout=float(_get("PATROL_MCP_TIMEOUT", "30")),
             patrol_repeat_hours=_int("PATROL_REPEAT_HOURS", 24),
+            update_check_enabled=_bool("AEGIS_UPDATE_CHECK", True),
+            github_repo=_get("AEGIS_GITHUB_REPO", "aegis-soc/aegis-soc"),
+            # 国内网络可用镜像前缀覆盖，例如 https://ghfast.top/https://api.github.com
+            github_api_base=_get("AEGIS_GITHUB_API_BASE", "https://api.github.com").rstrip("/"),
+            update_check_timeout=float(_get("AEGIS_UPDATE_CHECK_TIMEOUT", "5")),
+            update_cache_ttl=_int("AEGIS_UPDATE_CACHE_TTL", 600),
         )
 
     @property

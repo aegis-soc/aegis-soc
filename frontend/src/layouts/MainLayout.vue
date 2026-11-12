@@ -26,7 +26,9 @@
           </el-menu-item>
         </template>
       </el-menu>
-      <div class="aside-foot">v1.0.0 · Apache 2.0</div>
+      <div class="aside-foot" :title="store.buildTime ? `构建于 ${store.buildTime}` : ''">
+        v{{ store.version || '-' }}<span v-if="store.commit && store.commit !== 'unknown'"> · {{ store.commit }}</span> · Apache 2.0
+      </div>
     </el-aside>
 
     <el-container>
@@ -124,6 +126,9 @@ async function refreshStatus() {
   try {
     const status = await api.systemStatus()
     store.killSwitch = Boolean(status.kill_switch)
+    store.version = status.version || ''
+    store.commit = status.commit || ''
+    store.buildTime = status.build_time || ''
   } catch (e) { /* 已由拦截器提示 */ }
 }
 onMounted(refreshStatus)
