@@ -1,0 +1,38 @@
+export default {
+  title: 'IP 白名单',
+  desc: '受保护地址 / 网段，命中即豁免封禁；新增会自动解封网段内已下发的黑名单',
+  import: '批量导入',
+  add: '新增白名单',
+  checkPlaceholder: '输入 IP 检查是否命中白名单',
+  check: '检查命中',
+  protected: '已保护：{matched}',
+  notMatched: '未命中，可自动封禁',
+  keywordPlaceholder: '地址关键字',
+  col: {
+    cidr: '地址 / 网段',
+    mask: '掩码',
+    type: '类型',
+    remark: '备注',
+    createdBy: '创建人',
+    actions: '操作',
+  },
+  type: {
+    cidr: 'CIDR 网段',
+    single: '单 IP',
+  },
+  confirmDelete: '删除后该地址将不再受保护，确认？',
+  dialog: {
+    title: '新增白名单',
+    ip: 'IP / CIDR',
+    ipPlaceholder: '如 203.0.113.0/24',
+    unblockExisting: '自动解封已有',
+  },
+  importDialog: {
+    title: '批量导入白名单',
+    hint: '每行一个 IP 或 CIDR，支持 # 行内注释；最大允许 /8 网段。',
+    placeholder: '203.0.113.0/24\n198.51.100.10 # 示例地址',
+  },
+  saved: '已保存，自动解封 {n} 个任务',
+  imported: '导入成功 {created} 条，跳过 {skipped} 条，错误 {errors} 条',
+  deleted: '已删除',
+}

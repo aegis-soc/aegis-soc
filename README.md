@@ -33,6 +33,7 @@ English | [简体中文](README.zh-CN.md)
 - ✅ **Natural-language console**: ask in Chinese — "blacklist top countries", "any unblocked IP logs across devices in the last 3 days" — and it routes to MySQL aggregates or Graylog MCP by itself. No text2SQL: the router only emits a whitelisted DSL that code compiles into parameterised `SELECT`s or MCP searches; read-only, rate-limited, fully audited, and works without any LLM
 - ✅ **Alert-ingest IP allowlist**: decide which source IPs may call the alert webhook, right from the settings page — off by default, applied on save (no `.env` edit, no restart). The source IP is nginx `$remote_addr`; a client-supplied `X-Forwarded-For` is ignored
 - ✅ **Version & update check (read-only)**: the sidebar and settings page show `vX.Y.Z` plus the build commit; "Check for updates" asks the GitHub Releases API once (10-minute cache, mirror-friendly via `AEGIS_GITHUB_API_BASE`) and, if a newer tag exists, prints the upgrade commands. It never downloads or restarts anything — upgrading stays a deliberate, human-run step
+- ✅ **Bilingual UI (Chinese / English)**: one click at the bottom of the sidebar (Chinese by default, choice persisted locally) — menus, tables, forms, toasts and pagination all follow. Enum values stay stored as English codes and are only translated at render time, so **switching language never changes your filters**. Business data (IPs, domains, remarks, geolocation) is displayed as-is, never translated
 - ✅ **IP geolocation**: blacklist shows country / province·city (snapshot on write, offline ip2region database — 11 MB, no network, no licensing), filterable by country
 - ✅ **Hard safety boundaries**: whitelist first, RFC1918/loopback/reserved addresses never blocked, IOC-type vs device-capability matching, global kill switch
 - ✅ **Reliable async tasks**: Celery + Beat with idempotency, exponential-backoff retries, timeout control and scheduled unblock
@@ -171,7 +172,7 @@ aegis-soc/
 ├── frontend/             # Vue3 + Element Plus + Vite
 ├── deploy/               # nginx.conf / my.cnf
 ├── scripts/              # install.sh (one-command deploy) / smoke_test.py (post-deploy smoke checks)
-├── docs/                 # install / deploy-cloud / verify / graylog / plugin-dev / api / security / architecture / blacklist-history / geoip / ai-inspection / graylog-patrol / chat-nlq
+├── docs/                 # install / deploy-cloud / verify / graylog / plugin-dev / api / security / architecture / blacklist-history / geoip / ai-inspection / graylog-patrol / chat-nlq / i18n
 ├── .github/workflows/    # ci.yml (compile+test+build+compose lint), release.yml (tag-triggered multi-arch images)
 ├── docker-compose.yml
 ├── .env.example

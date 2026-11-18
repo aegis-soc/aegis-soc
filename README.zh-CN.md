@@ -31,6 +31,7 @@
 - ✅ **人机对话（自然语言查询）**：直接问中文——「分析黑名单来源 top10 和 top 国家」「最近 3 天各设备有未拦截的 IP 日志」——自动判断查 MySQL 统计还是查 Graylog MCP 三流日志。不做 text2SQL：路由只产出受控 DSL，由代码编译成参数化 `SELECT` 或 MCP 检索；只读、限流、全程审计，且不依赖大模型
 - ✅ **告警接口来源白名单**：系统设置页维护「哪些 IP 可以调用告警接入接口」，默认关闭，保存即生效——不用改 `.env`、不用重启容器。来源 IP 取 nginx 的 `$remote_addr`，客户端自带的 `X-Forwarded-For` 不参与判断
 - ✅ **版本与更新检查（只读）**：侧边栏与系统设置页显示 `vX.Y.Z` 与构建提交号；「检查更新」只向 GitHub Releases 问一次（缓存 10 分钟，可用 `AEGIS_GITHUB_API_BASE` 走镜像），有新版仅给出升级命令，不下载、不重启任何容器——升级仍是人工确认的一步
+- ✅ **界面中英文切换**：侧边栏底部一键切换（默认中文，选择存本地），菜单 / 表格 / 表单 / 提示 / 分页等全量跟随；枚举值仍以英文 code 存储，只在显示层翻译——**切语言不会改变筛选条件**。业务数据（IP、域名、备注、归属地）保持原样不翻译
 - ✅ **IP 归属地**：黑名单直接显示国家 / 省·市（如「中国 · 广东省·深圳市」），来自 ip2region 离线库（11 MB，无需联网、无需 ipip 授权），写入时快照落库、支持按国家筛选
 - ✅ **硬性安全边界**：白名单优先、内网/环回/保留地址禁止封禁、IOC 类型与设备能力匹配、全局熔断开关
 - ✅ **可靠异步任务**：Celery + Beat，幂等约束、指数退避重试、超时控制、到期自动解封
@@ -171,7 +172,7 @@ aegis-soc/
 ├── frontend/             # Vue3 + Element Plus + Vite
 ├── deploy/               # nginx.conf / my.cnf
 ├── scripts/              # install.sh（一键部署）/ smoke_test.py（部署后冒烟验收，仅标准库）
-├── docs/                 # install / deploy-cloud / verify / graylog / plugin-dev / api / security / architecture / blacklist-history / geoip / ai-inspection / graylog-patrol / chat-nlq
+├── docs/                 # install / deploy-cloud / verify / graylog / plugin-dev / api / security / architecture / blacklist-history / geoip / ai-inspection / graylog-patrol / chat-nlq / i18n
 ├── .github/workflows/    # ci.yml（编译+测试+构建+编排校验）、release.yml（tag 触发多架构镜像发布）
 ├── docker-compose.yml
 ├── .env.example

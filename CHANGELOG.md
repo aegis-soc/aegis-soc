@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+### 新增：前台界面中英文切换（P1 骨架 + P2 全页面迁移）
+
+动因：设备插件（启明 IPS、Palo Alto、阿里云 WAF）与 Graylog 生态的同行多数读英文，演示与开源分发时中文界面会卡住第一眼；但运营同学的日常读写仍是中文。所以做的是**界面文案双语**，不是把系统改成英文。
+
+- **技术选型**：`vue-i18n@9`（Composition API，`legacy: false`）。`frontend/src/i18n/index.js` 用 `import.meta.glob('./locales/*/*.js', { eager: true })` 按目录收集语言包，**文件名即命名空间**（`patrol.js` → `t('patrol.xxx')`），新增页面只要丢一个文件，不用改注册表
+- **语言包**：`zh-CN` / `en-US` 各 18 个文件、**728 个 key 完全对齐**，按页面切分（`common` 共享词汇 + `menu` / `layout` / `login` + 15 个业务页 + `enums` 枚举）
+- **默认语言固定中文**，不跟随浏览器 `Accept-Language`（避免运维在英文系统上打开看到英文）；选择存 `localStorage.gl_lang`，值只认 `en-US`，其余一律回落 `zh-CN`
+- **切换入口**：侧边栏底部版本号旁（`中文 / EN`，与 `v1.0.0 · <commit>` 同一行，最省地方）；登录页拿不到侧边栏，右上角单独放一个
+- **Element Plus 内置文案**同步切换：`App.vue` 包 `<el-config-provider :locale>`（`zh-cn` / `en`），分页「条/页」、日期选择、`el-empty` 等一并跟随
+- **响应式**：`store.locale` 变更 → `watch` 同步 `i18n.global.locale.value` 与 `<html lang>`，无需刷新；`fallbackLocale: 'zh-CN'` 保证漏译的 key 回退中文而不是显示裸 key 或白屏
+- **枚举值不翻译存储**：库里仍是 `active` / `BLOCK` / `online` 等英文 code，只在显示层过 `pick(ns, value)` 翻译；**筛选条件不受语言影响**，切语言不会把已选中的下拉项冲掉
+- **未知值不吞**：`pick()` 里先 `te()` 判断，语言包没有的枚举**原样显示**，不会变成 `blacklist.status.xxx` 这种裸 key
+- **业务数据不翻译**：IP、域名、设备名、备注、国家名（ip2region 写入的中文原值）保持原样，只对 `country.中国` 这类做显示映射，`geo_country === '中国'` 的判断逻辑一行没动
+- **验证**：`vite build` 通过；脚本比对 18 个语言文件 key 集合全部一致（728/728）、无空值、无占位符 `{n}` 不匹配；扫描全部 `.vue` 残留中文，仅剩代码注释与上述国家值常量
+- **本轮不做**（已明确排除）：P3 后端 51 处 `BizError` 文案错误码化、P4 巡检结论与人机对话事实句的服务端双语、P5 CI 校验语言包一致性。原因是这三块都要动后端契约，收益远低于 P1+P2，等真有人用英文界面提 issue 再说
+
 ### 新增：系统设置显示版本号 + 只读「检查更新」（一期 / 二期）
 
 - **版本单一来源**：仍以 `backend/app/__init__.py` 的 `__version__` 为准，`/system/status` 新增 `commit`、`build_time`；前端侧边栏原本写死的 `v1.0.0` 改为读接口

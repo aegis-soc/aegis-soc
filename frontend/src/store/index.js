@@ -4,6 +4,7 @@ const TOKEN_KEY = 'gl_token'
 const ROLE_KEY = 'gl_role'
 const USER_KEY = 'gl_user'
 const CHANGE_KEY = 'gl_must_change'
+const LANG_KEY = 'gl_lang'
 
 export const store = reactive({
   token: localStorage.getItem(TOKEN_KEY) || '',
@@ -15,6 +16,8 @@ export const store = reactive({
   version: '',
   commit: '',
   buildTime: '',
+  // 默认固定中文，不跟随浏览器；只有手动切过才记住
+  locale: localStorage.getItem(LANG_KEY) === 'en-US' ? 'en-US' : 'zh-CN',
 })
 
 export function setAuth(data) {
@@ -24,6 +27,11 @@ export function setAuth(data) {
   localStorage.setItem(TOKEN_KEY, store.token)
   localStorage.setItem(ROLE_KEY, store.role)
   localStorage.setItem(CHANGE_KEY, store.mustChange ? '1' : '0')
+}
+
+export function setLocale(locale) {
+  store.locale = locale === 'en-US' ? 'en-US' : 'zh-CN'
+  localStorage.setItem(LANG_KEY, store.locale)
 }
 
 export function setUser(username) {

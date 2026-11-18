@@ -1,36 +1,36 @@
 <template>
   <div class="page">
     <div class="page-header">
-      <div><h2 class="page-title">IP 黑名单</h2><p class="page-desc">同一 IP 多次命中按流水记录保存，不合并；被拦截的 IOC 也会留痕，状态为 rejected / whitelisted；国家/地区由 ip2region 离线库在写入时记录</p></div>
+      <div><h2 class="page-title">{{ t('blacklist.ip.title') }}</h2><p class="page-desc">{{ t('blacklist.ip.desc') }}</p></div>
       <div>
-        <el-button :icon="Download" @click="doExport">导出 CSV</el-button>
-        <el-button :icon="Upload" @click="openImport">批量导入</el-button>
-        <el-button type="primary" :icon="Plus" @click="dialog = true">新增黑名单</el-button>
+        <el-button :icon="Download" @click="doExport">{{ t('blacklist.common.exportCsv') }}</el-button>
+        <el-button :icon="Upload" @click="openImport">{{ t('blacklist.common.import') }}</el-button>
+        <el-button type="primary" :icon="Plus" @click="dialog = true">{{ t('blacklist.ip.add') }}</el-button>
       </div>
     </div>
     <div class="filter-bar">
-      <el-select v-model="query.status" placeholder="状态" clearable style="width: 140px">
-        <el-option v-for="s in STATUS_OPTIONS" :key="s.value" :label="s.label" :value="s.value" />
+      <el-select v-model="query.status" :placeholder="t('blacklist.common.statusPlaceholder')" clearable style="width: 150px">
+        <el-option v-for="s in STATUS_VALUES" :key="s" :label="statusLabel(s)" :value="s" />
       </el-select>
-      <el-select v-model="query.source_type" placeholder="来源" clearable style="width: 130px">
-        <el-option v-for="s in SOURCE_OPTIONS" :key="s.value" :label="s.label" :value="s.value" />
+      <el-select v-model="query.source_type" :placeholder="t('blacklist.common.sourcePlaceholder')" clearable style="width: 150px">
+        <el-option v-for="s in SOURCE_VALUES" :key="s" :label="sourceLabel(s)" :value="s" />
       </el-select>
-      <el-select v-model="query.country" placeholder="国家/地区" clearable filterable allow-create default-first-option style="width: 150px">
-        <el-option v-for="c in COUNTRY_OPTIONS" :key="c" :label="c" :value="c" />
+      <el-select v-model="query.country" :placeholder="t('blacklist.ip.countryPlaceholder')" clearable filterable allow-create default-first-option style="width: 160px">
+        <el-option v-for="c in COUNTRY_OPTIONS" :key="c" :label="countryLabel(c)" :value="c" />
       </el-select>
-      <el-input v-model="query.keyword" placeholder="IP / 归属地 / 设备名 / 告警ID" clearable style="width: 240px" @keyup.enter="load" />
-      <el-button type="primary" @click="load">查询</el-button>
+      <el-input v-model="query.keyword" :placeholder="t('blacklist.common.keywordIp')" clearable style="width: 260px" @keyup.enter="load" />
+      <el-button type="primary" @click="load">{{ t('common.action.search') }}</el-button>
     </div>
     <div class="table-card">
       <el-table :data="rows" size="small" stripe v-loading="loading">
-        <el-table-column prop="normalized_value" label="IP / CIDR" min-width="140" class-name="mono" fixed />
-        <el-table-column label="国家" width="110">
+        <el-table-column prop="normalized_value" :label="t('blacklist.ip.col.ip')" min-width="140" class-name="mono" fixed />
+        <el-table-column :label="t('blacklist.ip.col.country')" width="130">
           <template #default="{ row }">
             <span v-if="!row.geo_country" class="text-muted">-</span>
-            <el-tag v-else size="small" :type="row.geo_country === '中国' ? 'danger' : 'info'" effect="plain">{{ row.geo_country }}</el-tag>
+            <el-tag v-else size="small" :type="row.geo_country === '中国' ? 'danger' : 'info'" effect="plain">{{ countryLabel(row.geo_country) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="地区" min-width="150">
+        <el-table-column :label="t('blacklist.ip.col.region')" min-width="150">
           <template #default="{ row }">
             <span v-if="!row.geo_region" class="text-muted">-</span>
             <el-tooltip v-else :content="geoTitle(row)" placement="top">
@@ -38,33 +38,35 @@
             </el-tooltip>
           </template>
         </el-table-column>
-        <el-table-column label="来源" width="120">
+        <el-table-column :label="t('blacklist.ip.col.source')" width="130">
           <template #default="{ row }">
             <el-tooltip :content="sourceTooltip(row)" placement="top">
-              <el-tag size="small" :type="SOURCE_TAG[row.source_type] || 'info'">{{ SOURCE_LABEL[row.source_type] || row.source_type || '未知' }}</el-tag>
+              <el-tag size="small" :type="SOURCE_TAG[row.source_type] || 'info'">{{ sourceLabel(row.source_type) }}</el-tag>
             </el-tooltip>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="110">
+        <el-table-column :label="t('blacklist.ip.col.status')" width="120">
           <template #default="{ row }">
             <el-tooltip :content="row.reject_reason || statusLabel(row.status)" placement="top">
               <el-tag size="small" :type="STATUS_TAG[row.status] || 'info'">{{ statusLabel(row.status) }}</el-tag>
             </el-tooltip>
           </template>
         </el-table-column>
-        <el-table-column prop="risk_level" label="风险" width="80" />
-        <el-table-column prop="confidence" label="置信度" width="80" />
-        <el-table-column label="添加时间" width="160">
+        <el-table-column prop="risk_level" :label="t('blacklist.ip.col.risk')" width="90">
+          <template #default="{ row }">{{ riskLabel(row.risk_level) }}</template>
+        </el-table-column>
+        <el-table-column prop="confidence" :label="t('blacklist.ip.col.confidence')" width="90" />
+        <el-table-column :label="t('blacklist.ip.col.createdAt')" width="160">
           <template #default="{ row }">{{ fmt(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column label="过期时间" width="160">
-          <template #default="{ row }">{{ fmt(row.expire_at) || '永久' }}</template>
+        <el-table-column :label="t('blacklist.ip.col.expireAt')" width="160">
+          <template #default="{ row }">{{ fmt(row.expire_at) || t('blacklist.common.permanent') }}</template>
         </el-table-column>
-        <el-table-column prop="remark" label="备注 / 原因" min-width="200" show-overflow-tooltip />
-        <el-table-column label="操作" width="100" fixed="right">
+        <el-table-column prop="remark" :label="t('blacklist.ip.col.remark')" min-width="200" show-overflow-tooltip />
+        <el-table-column :label="t('blacklist.ip.col.actions')" width="100" fixed="right">
           <template #default="{ row }">
-            <el-popconfirm :title="row.status === 'active' ? '删除将自动生成解封任务，确认？' : '删除这条留痕记录？'" @confirm="remove(row)">
-              <template #reference><el-button link type="danger">删除</el-button></template>
+            <el-popconfirm :title="row.status === 'active' ? t('blacklist.ip.confirmUnblock') : t('blacklist.ip.confirmDeleteLog')" @confirm="remove(row)">
+              <template #reference><el-button link type="danger">{{ t('common.action.delete') }}</el-button></template>
             </el-popconfirm>
           </template>
         </el-table-column>
@@ -72,43 +74,50 @@
       <div class="pager"><el-pagination background layout="total, prev, pager, next" :total="total" :page-size="query.page_size" :current-page="query.page" @current-change="(p) => { query.page = p; load() }" /></div>
     </div>
 
-    <el-dialog v-model="dialog" title="新增 IP 黑名单" width="480px">
-      <el-form :model="form" label-width="110px">
-        <el-form-item label="IP 地址" required><el-input v-model="form.ioc_value" placeholder="公网 IP 或 CIDR（最大 /16）" /></el-form-item>
-        <el-form-item label="置信度"><el-input-number v-model="form.confidence" :min="0" :max="100" /></el-form-item>
-        <el-form-item label="风险等级">
-          <el-select v-model="form.risk_level" style="width: 100%"><el-option v-for="s in ['critical','high','medium','low']" :key="s" :label="s" :value="s" /></el-select>
+    <el-dialog v-model="dialog" :title="t('blacklist.ip.dialog.title')" width="480px">
+      <el-form :model="form" label-width="120px">
+        <el-form-item :label="t('blacklist.ip.dialog.ip')" required><el-input v-model="form.ioc_value" :placeholder="t('blacklist.ip.dialog.ipPlaceholder')" /></el-form-item>
+        <el-form-item :label="t('blacklist.common.confidence')"><el-input-number v-model="form.confidence" :min="0" :max="100" /></el-form-item>
+        <el-form-item :label="t('blacklist.common.riskLevel')">
+          <el-select v-model="form.risk_level" style="width: 100%">
+            <el-option v-for="s in RISK_VALUES" :key="s" :label="riskLabel(s)" :value="s" />
+          </el-select>
         </el-form-item>
-        <el-form-item label="封禁时长(秒)"><el-input-number v-model="form.duration_seconds" :min="0" :step="3600" /><span class="text-muted" style="margin-left: 8px; font-size: 11px">0 = 永久</span></el-form-item>
-        <el-form-item label="备注"><el-input v-model="form.remark" type="textarea" :rows="2" /></el-form-item>
-        <el-form-item label="立即下发"><el-switch v-model="form.dispatch" /></el-form-item>
+        <el-form-item :label="t('blacklist.common.duration')">
+          <el-input-number v-model="form.duration_seconds" :min="0" :step="3600" />
+          <span class="text-muted" style="margin-left: 8px; font-size: 11px">{{ t('blacklist.common.durationHint') }}</span>
+        </el-form-item>
+        <el-form-item :label="t('blacklist.common.remark')"><el-input v-model="form.remark" type="textarea" :rows="2" /></el-form-item>
+        <el-form-item :label="t('blacklist.common.dispatch')"><el-switch v-model="form.dispatch" /></el-form-item>
       </el-form>
-      <template #footer><el-button @click="dialog = false">取消</el-button><el-button type="primary" @click="submit">提交</el-button></template>
+      <template #footer><el-button @click="dialog = false">{{ t('common.action.cancel') }}</el-button><el-button type="primary" @click="submit">{{ t('blacklist.common.submit') }}</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="importDialog" title="批量导入 IP 黑名单" width="560px">
-      <el-alert type="info" :closable="false" style="margin-bottom: 12px"
-        title="每行一个公网 IP 或 CIDR（最大 /16），支持备注：1.2.3.4,攻击源 或 1.2.3.4 # 攻击源；# 开头为注释行" />
-      <el-form label-width="100px">
-        <el-form-item label="粘贴文本">
-          <el-input v-model="importText" type="textarea" :rows="7" placeholder="1.2.3.4&#10;5.6.7.0/24,扫描源&#10;# 这是注释" />
+    <el-dialog v-model="importDialog" :title="t('blacklist.ip.importTitle')" width="560px">
+      <el-alert type="info" :closable="false" style="margin-bottom: 12px" :title="t('blacklist.ip.importHint')" />
+      <el-form label-width="110px">
+        <el-form-item :label="t('blacklist.common.pasteText')">
+          <el-input v-model="importText" type="textarea" :rows="7" :placeholder="t('blacklist.ip.importPlaceholder')" />
         </el-form-item>
-        <el-form-item label="或上传文件">
+        <el-form-item :label="t('blacklist.common.orFile')">
           <input type="file" accept=".txt,.csv,.log" @change="onImportFile" />
           <span v-if="importFile" class="text-muted" style="margin-left: 8px; font-size: 12px">{{ importFile.name }}</span>
         </el-form-item>
-        <el-form-item label="封禁时长(秒)"><el-input-number v-model="importForm.duration_seconds" :min="0" :step="3600" /><span class="text-muted" style="margin-left: 8px; font-size: 11px">0 = 永久</span></el-form-item>
-        <el-form-item label="立即下发"><el-switch v-model="importForm.dispatch" /></el-form-item>
+        <el-form-item :label="t('blacklist.common.duration')">
+          <el-input-number v-model="importForm.duration_seconds" :min="0" :step="3600" />
+          <span class="text-muted" style="margin-left: 8px; font-size: 11px">{{ t('blacklist.common.durationHint') }}</span>
+        </el-form-item>
+        <el-form-item :label="t('blacklist.common.dispatch')"><el-switch v-model="importForm.dispatch" /></el-form-item>
       </el-form>
       <el-alert v-if="importResult" :type="importResult.errors?.length ? 'warning' : 'success'" :closable="false">
-        <p>新增 {{ importResult.created }} 条，已存在跳过 {{ importResult.skipped }} 条，白名单豁免 {{ importResult.whitelisted }} 条，下发任务 {{ importResult.task_count }} 个</p>
+        <p>{{ t('blacklist.common.importSummary', { created: importResult.created, skipped: importResult.skipped, whitelisted: importResult.whitelisted, tasks: importResult.task_count }) }}</p>
         <p v-if="importResult.errors?.length" style="margin-top: 4px; font-size: 12px">
-          {{ importResult.errors.slice(0, 10).join('；') }}{{ importResult.errors.length > 10 ? ` 等 ${importResult.errors.length} 条` : '' }}
+          {{ importResult.errors.slice(0, 10).join('; ') }}{{ importResult.errors.length > 10 ? ' ' + t('blacklist.common.importMore', { n: importResult.errors.length }) : '' }}
         </p>
       </el-alert>
       <template #footer>
-        <el-button @click="importDialog = false">关闭</el-button>
-        <el-button type="primary" :loading="importing" @click="submitImport">导入</el-button>
+        <el-button @click="importDialog = false">{{ t('blacklist.common.close') }}</el-button>
+        <el-button type="primary" :loading="importing" @click="submitImport">{{ t('common.action.import') }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -116,10 +125,12 @@
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { Download, Plus, Upload } from '@element-plus/icons-vue'
 import { api } from '../api'
 
+const { t, te } = useI18n()
 const rows = ref([])
 const total = ref(0)
 const loading = ref(false)
@@ -127,54 +138,40 @@ const dialog = ref(false)
 const query = reactive({ page: 1, page_size: 20, status: '', source_type: '', country: '', keyword: '' })
 const form = reactive({ ioc_value: '', confidence: 80, risk_level: 'high', duration_seconds: 7200, remark: '', dispatch: true })
 
-const STATUS_OPTIONS = [
-  { value: 'active', label: '已下发' },
-  { value: 'rejected', label: '被拦截' },
-  { value: 'whitelisted', label: '白名单豁免' },
-  { value: 'expired', label: '已过期' },
-  { value: 'disabled', label: '已解封' },
-]
+const STATUS_VALUES = ['active', 'rejected', 'whitelisted', 'expired', 'disabled']
 const STATUS_TAG = { active: 'danger', rejected: 'warning', whitelisted: 'info', expired: 'info', disabled: 'info' }
-const STATUS_LABEL = Object.fromEntries(STATUS_OPTIONS.map((s) => [s.value, s.label]))
-
-const SOURCE_OPTIONS = [
-  { value: 'IPS', label: 'IPS 入侵防御' },
-  { value: 'WAF', label: 'WAF' },
-  { value: 'ZTNA', label: '零信任' },
-  { value: 'TI', label: '威胁情报' },
-  { value: 'NTA', label: '态势感知' },
-  { value: 'AV', label: '防病毒' },
-  { value: 'FW', label: '防火墙' },
-  { value: 'GRAYLOG', label: 'Graylog' },
-  { value: 'MANUAL', label: '手工添加' },
-  { value: 'API', label: 'API' },
-  { value: 'UNKNOWN', label: '未识别' },
-]
-const SOURCE_LABEL = Object.fromEntries(SOURCE_OPTIONS.map((s) => [s.value, s.label]))
+const SOURCE_VALUES = ['IPS', 'WAF', 'ZTNA', 'TI', 'NTA', 'AV', 'FW', 'GRAYLOG', 'MANUAL', 'API', 'UNKNOWN']
 const SOURCE_TAG = { IPS: 'danger', WAF: 'warning', ZTNA: 'primary', TI: 'danger', NTA: 'warning', AV: 'warning', FW: 'primary', MANUAL: 'info', GRAYLOG: 'info', API: 'info' }
+const RISK_VALUES = ['critical', 'high', 'medium', 'low']
 
-function statusLabel(status) {
-  return STATUS_LABEL[status] || status
+function pick(namespace, value) {
+  if (!value) return '-'
+  const key = `${namespace}.${value}`
+  return te(key) ? t(key) : value
 }
+const statusLabel = (v) => pick('blacklist.status', v)
+const sourceLabel = (v) => pick('blacklist.source', v || 'UNKNOWN')
+const riskLabel = (v) => pick('enums.risk', v)
+// 国家名是 ip2region 写入数据库的中文原值，这里只做显示映射，值本身不改
+const countryLabel = (v) => pick('blacklist.country', v)
+
 function fmt(value) {
   if (!value) return ''
   return String(value).replace('T', ' ').slice(0, 19)
 }
 function sourceTooltip(row) {
-  const parts = [row.source_type || 'UNKNOWN']
+  const parts = [sourceLabel(row.source_type)]
   if (row.source_detail) parts.push(row.source_detail)
-  if (row.alert_id) parts.push(`告警 ${row.alert_id}`)
+  if (row.alert_id) parts.push(t('blacklist.common.alertRef', { id: row.alert_id }))
   return parts.join(' · ')
 }
-
 function geoTitle(row) {
-  const parts = [row.geo_country, row.geo_region].filter(Boolean)
+  const parts = [countryLabel(row.geo_country), row.geo_region].filter(Boolean)
   if (row.geo_isp) parts.push(row.geo_isp)
   return parts.join(' · ')
 }
 
-// 内置常用国家选项（可输入任意国家名过滤）；归属地不需要独立接口，
-// 由列表数据 + 离线库直接支撑
+// 内置常用国家选项（值仍是中文，保证与库内数据、后端过滤一致）
 const COUNTRY_OPTIONS = [
   '内网', '保留地址', '中国', '中国香港', '中国澳门', '中国台湾',
   '美国', '俄罗斯', '日本', '韩国', '印度', '越南', '新加坡',
@@ -194,7 +191,7 @@ async function load() {
 async function submit() {
   try {
     const data = await api.addIocIp({ ...form, ioc_type: 'IP' })
-    ElMessage.success(`已保存，生成 ${data.task_count} 个封禁任务`)
+    ElMessage.success(t('blacklist.ip.saved', { n: data.task_count }))
     dialog.value = false
     form.ioc_value = ''
     load()
@@ -203,7 +200,7 @@ async function submit() {
 async function remove(row) {
   try {
     const data = await api.deleteIocIp(row.id)
-    ElMessage.success(`已删除，生成 ${data.unblock_task_count} 个解封任务`)
+    ElMessage.success(t('blacklist.ip.deleted', { n: data.unblock_task_count }))
     load()
   } catch (e) { /* 拦截器已提示 */ }
 }
@@ -227,7 +224,7 @@ function onImportFile(e) {
 }
 async function submitImport() {
   if (!importText.value.trim() && !importFile.value) {
-    ElMessage.warning('请粘贴文本或选择文件')
+    ElMessage.warning(t('blacklist.common.needInput'))
     return
   }
   importing.value = true
@@ -236,10 +233,10 @@ async function submitImport() {
     if (importFile.value) fd.append('file', importFile.value)
     if (importText.value.trim()) fd.append('text', importText.value)
     fd.append('dispatch', String(importForm.dispatch))
-    fd.append('duration_seconds', String(importForm.duration_seconds || 0) )
+    fd.append('duration_seconds', String(importForm.duration_seconds || 0))
     const data = await api.importIocIps(fd)
     importResult.value = data
-    ElMessage.success(`导入完成：新增 ${data.created} 条`)
+    ElMessage.success(t('blacklist.common.imported', { n: data.created }))
     load()
   } catch (e) { /* 拦截器已提示 */ } finally { importing.value = false }
 }
@@ -256,7 +253,7 @@ async function doExport() {
     a.download = `blacklist-ip-${new Date().toISOString().slice(0, 10)}.csv`
     a.click()
     URL.revokeObjectURL(url)
-  } catch (e) { ElMessage.error('导出失败') }
+  } catch (e) { ElMessage.error(t('blacklist.common.exportFailed')) }
 }
 onMounted(load)
 </script>

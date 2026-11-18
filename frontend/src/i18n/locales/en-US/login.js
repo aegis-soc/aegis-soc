@@ -1,0 +1,19 @@
+export default {
+  sub: 'Automated security operations · AI + SOC · Please sign in',
+  username: 'Username',
+  password: 'Password',
+  passwordPlaceholder: 'Enter your password',
+  submit: 'Sign in',
+  footer: 'The default account must change its password on first sign-in · Apache 2.0',
+  needBoth: 'Enter both username and password',
+  pwdUpdated: 'Password updated',
+  change: {
+    title: 'Change the default password',
+    alertTitle: 'Security notice',
+    alertDesc: 'The initial password is still in use. Change it before using the platform.',
+    old: 'Current password',
+    new: 'New password',
+    later: 'Later',
+    confirm: 'Change now',
+  },
+}

@@ -1,0 +1,38 @@
+export default {
+  title: 'Dashboard',
+  desc: 'Alerts, IOCs, devices and tasks at a glance',
+  kill: {
+    title: 'Global kill switch is on',
+    desc: 'Auto-block tasks are suspended; alerts are recorded only. Turn it off under Settings.',
+  },
+  stat: {
+    alertsToday: 'Alerts today',
+    alertsTotal: '{n} in total',
+    iocActive: 'Active blocklist',
+    iocDetail: '{expired} expired · {rejected} rejected',
+    whitelist: 'Allowlist',
+    whitelistHint: 'Protected addresses / subnets',
+    deviceOnline: 'Devices online',
+    deviceTotal: '{n} in total',
+    taskPending: 'Pending tasks',
+    taskPendingHint: 'Including retries and approvals',
+    taskResult: 'Succeeded / failed',
+    taskTotal: '{n} in total',
+  },
+  risk: {
+    title: 'Risk distribution',
+    empty: 'No alerts yet',
+    critical: 'Critical',
+    high: 'High',
+    medium: 'Medium',
+    low: 'Low',
+  },
+  recent: {
+    title: 'Recent alerts',
+    time: 'Time',
+    alertTitle: 'Title',
+    source: 'Source',
+    risk: 'Risk',
+    status: 'Status',
+  },
+}

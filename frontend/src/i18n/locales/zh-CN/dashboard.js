@@ -1,0 +1,38 @@
+export default {
+  title: '首页大盘',
+  desc: '告警、IOC、设备与任务的整体运行态势',
+  kill: {
+    title: '全局熔断已开启',
+    desc: '自动封禁任务暂停生成，告警仅留痕。可在系统设置中关闭。',
+  },
+  stat: {
+    alertsToday: '今日告警',
+    alertsTotal: '累计 {n} 条',
+    iocActive: '活跃黑名单',
+    iocDetail: '已过期 {expired} · 被拦截 {rejected}',
+    whitelist: '白名单',
+    whitelistHint: '受保护地址 / 网段',
+    deviceOnline: '在线设备',
+    deviceTotal: '共 {n} 台',
+    taskPending: '待处理任务',
+    taskPendingHint: '含重试与待审批',
+    taskResult: '成功 / 失败任务',
+    taskTotal: '累计 {n} 条',
+  },
+  risk: {
+    title: '风险分布',
+    empty: '暂无告警',
+    critical: '严重',
+    high: '高危',
+    medium: '中危',
+    low: '低危',
+  },
+  recent: {
+    title: '最近告警',
+    time: '时间',
+    alertTitle: '告警标题',
+    source: '来源',
+    risk: '风险',
+    status: '处置状态',
+  },
+}

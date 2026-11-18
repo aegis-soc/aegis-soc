@@ -4,8 +4,8 @@
       <div class="brand">
         <div class="brand-mark">AS</div>
         <div>
-          <div class="brand-name">宙斯盾 Aegis</div>
-          <div class="brand-sub">通用安全运营自动化 AI+SOC</div>
+          <div class="brand-name">{{ t('common.app.name') }}</div>
+          <div class="brand-sub">{{ t('common.app.sub') }}</div>
         </div>
       </div>
       <el-menu :key="activeGroupKey" :default-active="activeMenu" :default-openeds="openedGroups" router background-color="#1f2a3d" text-color="#c0c8d6" active-text-color="#ffffff">
@@ -13,21 +13,28 @@
           <el-sub-menu v-if="item.children" :index="item.index">
             <template #title>
               <el-icon><component :is="item.icon" /></el-icon>
-              <span>{{ item.title }}</span>
+              <span>{{ t(item.titleKey) }}</span>
             </template>
             <el-menu-item v-for="child in item.children" :key="child.path" :index="child.path">
               <el-icon><component :is="child.icon" /></el-icon>
-              <span>{{ child.title }}</span>
+              <span>{{ t(child.titleKey) }}</span>
             </el-menu-item>
           </el-sub-menu>
           <el-menu-item v-else :index="item.path">
             <el-icon><component :is="item.icon" /></el-icon>
-            <span>{{ item.title }}</span>
+            <span>{{ t(item.titleKey) }}</span>
           </el-menu-item>
         </template>
       </el-menu>
-      <div class="aside-foot" :title="store.buildTime ? `构建于 ${store.buildTime}` : ''">
-        v{{ store.version || '-' }}<span v-if="store.commit && store.commit !== 'unknown'"> · {{ store.commit }}</span> · Apache 2.0
+      <div class="aside-foot">
+        <span class="foot-version" :title="buildTimeText">
+          v{{ store.version || '-' }}<span v-if="store.commit && store.commit !== 'unknown'"> · {{ store.commit }}</span>
+        </span>
+        <span class="lang-switch" :title="t('common.lang.label')">
+          <a :class="{ on: store.locale === 'zh-CN' }" @click="switchLang('zh-CN')">{{ t('common.lang.zh') }}</a>
+          <i>/</i>
+          <a :class="{ on: store.locale === 'en-US' }" @click="switchLang('en-US')">EN</a>
+        </span>
       </div>
     </el-aside>
 
@@ -35,19 +42,19 @@
       <el-header class="header">
         <div class="header-left">
           <span class="crumb">{{ currentTitle }}</span>
-          <el-tag v-if="store.killSwitch" type="danger" size="small" effect="dark">自动封禁已熔断</el-tag>
-          <el-tag v-else type="success" size="small" effect="plain">自动封禁运行中</el-tag>
+          <el-tag v-if="store.killSwitch" type="danger" size="small" effect="dark">{{ t('layout.killSwitchOn') }}</el-tag>
+          <el-tag v-else type="success" size="small" effect="plain">{{ t('layout.killSwitchOff') }}</el-tag>
         </div>
         <div class="header-right">
           <el-tag size="small" type="info">{{ roleLabel }}</el-tag>
-          <span class="username">{{ store.username || '未登录' }}</span>
-          <el-button link type="primary" @click="doLogout">退出</el-button>
+          <span class="username">{{ store.username || t('common.tip.notLoggedIn') }}</span>
+          <el-button link type="primary" @click="doLogout">{{ t('layout.logout') }}</el-button>
         </div>
       </el-header>
       <el-main class="main">
         <el-alert
           v-if="store.mustChange" type="warning" show-icon :closable="false"
-          title="首次登录请尽快修改默认口令" description="可在「系统设置」页面修改，修改后本提示自动消失。"
+          :title="t('layout.mustChangeTitle')" :description="t('layout.mustChangeDesc')"
           style="margin-bottom: 16px"
         />
         <router-view />
@@ -57,49 +64,53 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { api } from '../api'
-import { logout, store } from '../store'
+import { logout, setLocale, store } from '../store'
 
+const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
+
+// 菜单只存 key，文案在语言包里——加一种语言不用碰这个文件
 const menus = [
-  { path: '/dashboard', title: '首页大盘', icon: 'Odometer' },
+  { path: '/dashboard', titleKey: 'menu.dashboard', icon: 'Odometer' },
   {
-    index: 'g-ai', title: 'AI 运营', icon: 'MagicStick',
+    index: 'g-ai', titleKey: 'menu.aiOps', icon: 'MagicStick',
     children: [
-      { path: '/inspections', title: 'AI 巡检', icon: 'Search' },
-      { path: '/patrol', title: '日志巡检', icon: 'Aim' },
-      { path: '/chat', title: '人机对话', icon: 'ChatDotRound' },
+      { path: '/inspections', titleKey: 'menu.inspections', icon: 'Search' },
+      { path: '/patrol', titleKey: 'menu.patrol', icon: 'Aim' },
+      { path: '/chat', titleKey: 'menu.chat', icon: 'ChatDotRound' },
     ],
   },
-  { path: '/alerts', title: '告警中心', icon: 'Bell' },
+  { path: '/alerts', titleKey: 'menu.alerts', icon: 'Bell' },
   {
-    index: 'g-ioc', title: '黑白名单', icon: 'Filter',
+    index: 'g-ioc', titleKey: 'menu.ioc', icon: 'Filter',
     children: [
-      { path: '/blacklist-ip', title: 'IP 黑名单', icon: 'Lock' },
-      { path: '/blacklist-domain', title: '域名黑名单', icon: 'Link' },
-      { path: '/whitelist-ip', title: 'IP 白名单', icon: 'Unlock' },
-    ],
-  },
-  {
-    index: 'g-policy', title: '策略配置', icon: 'SetUp',
-    children: [
-      { path: '/policies', title: '策略列表', icon: 'Operation' },
-      { path: '/devices', title: '设备管理', icon: 'Monitor' },
-      { path: '/plugins', title: '插件管理', icon: 'Grid' },
+      { path: '/blacklist-ip', titleKey: 'menu.blacklistIp', icon: 'Lock' },
+      { path: '/blacklist-domain', titleKey: 'menu.blacklistDomain', icon: 'Link' },
+      { path: '/whitelist-ip', titleKey: 'menu.whitelistIp', icon: 'Unlock' },
     ],
   },
   {
-    index: 'g-audit', title: '日志审计', icon: 'Document',
+    index: 'g-policy', titleKey: 'menu.policy', icon: 'SetUp',
     children: [
-      { path: '/tasks', title: '任务日志', icon: 'List' },
-      { path: '/audit', title: '操作审计', icon: 'Document' },
+      { path: '/policies', titleKey: 'menu.policies', icon: 'Operation' },
+      { path: '/devices', titleKey: 'menu.devices', icon: 'Monitor' },
+      { path: '/plugins', titleKey: 'menu.plugins', icon: 'Grid' },
     ],
   },
-  { path: '/system', title: '系统设置', icon: 'Tools' },
+  {
+    index: 'g-audit', titleKey: 'menu.audit', icon: 'Document',
+    children: [
+      { path: '/tasks', titleKey: 'menu.tasks', icon: 'List' },
+      { path: '/audit', titleKey: 'menu.auditOps', icon: 'Document' },
+    ],
+  },
+  { path: '/system', titleKey: 'menu.system', icon: 'Tools' },
 ]
 const activeMenu = computed(() => route.path)
 
@@ -109,18 +120,30 @@ const openedGroups = computed(() => {
   return group ? [group.index] : []
 })
 
+// 面包屑显示「分组 / 页面」，比单看页面名更能说明自己在哪
 function menuTitle(path) {
   for (const item of menus) {
-    if (item.path === path) return item.title
+    if (item.path === path) return t(item.titleKey)
     const child = (item.children || []).find((c) => c.path === path)
-    if (child) return `${item.title} / ${child.title}`
+    if (child) return `${t(item.titleKey)} / ${t(child.titleKey)}`
   }
-  return route.meta.title || '宙斯盾 Aegis'
+  return t(route.meta.titleKey || 'layout.crumbFallback')
 }
 const currentTitle = computed(() => menuTitle(route.path))
 // 换分组时重新挂载菜单，保证只有当前分组是展开的
 const activeGroupKey = computed(() => openedGroups.value[0] || 'root')
-const roleLabel = computed(() => ({ admin: '系统管理员', operator: '安全运营', auditor: '只读审计员' })[store.role] || store.role)
+const roleLabel = computed(() => {
+  const key = `common.role.${store.role}`
+  return store.role && t(key) !== key ? t(key) : store.role
+})
+const buildTimeText = computed(() =>
+  t('layout.builtAt', { time: store.buildTime || '-' }) + ' · ' + t('layout.license'),
+)
+
+function switchLang(locale) {
+  if (store.locale === locale) return
+  setLocale(locale)
+}
 
 async function refreshStatus() {
   try {
@@ -134,7 +157,7 @@ async function refreshStatus() {
 onMounted(refreshStatus)
 
 async function doLogout() {
-  await ElMessageBox.confirm('确认退出登录？', '提示', { type: 'warning' }).catch(() => 'cancel')
+  await ElMessageBox.confirm(t('common.tip.logoutConfirm'), t('common.tip.prompt'), { type: 'warning' }).catch(() => 'cancel')
     .then((action) => {
       if (action === 'cancel') return
       logout()
@@ -150,7 +173,16 @@ async function doLogout() {
 .brand-name { color: #fff; font-size: 14px; font-weight: 600; }
 .brand-sub { color: #8b97ab; font-size: 10px; margin-top: 2px; }
 .aside :deep(.el-menu) { border-right: none; flex: 1; }
-.aside-foot { color: #66738a; font-size: 11px; padding: 14px 16px; border-top: 1px solid #2c3a52; }
+.aside-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  color: #66738a; font-size: 11px; padding: 12px 14px; border-top: 1px solid #2c3a52;
+}
+.foot-version { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lang-switch { display: flex; align-items: center; gap: 4px; flex: none; }
+.lang-switch a { color: #7c8aa0; cursor: pointer; text-decoration: none; }
+.lang-switch a:hover { color: #c0c8d6; }
+.lang-switch a.on { color: #ffffff; font-weight: 600; }
+.lang-switch i { font-style: normal; color: #445066; }
 .header { background: #fff; border-bottom: 1px solid #ebeef5; display: flex; align-items: center; justify-content: space-between; }
 .header-left, .header-right { display: flex; align-items: center; gap: 12px; }
 .crumb { font-size: 15px; font-weight: 600; }

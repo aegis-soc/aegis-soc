@@ -1,0 +1,38 @@
+export default {
+  title: 'IP allowlist',
+  desc: 'Protected addresses and subnets; anything matching is exempt from blocking. Adding one unblocks any blocklist entry inside the range',
+  import: 'Bulk import',
+  add: 'Add to allowlist',
+  checkPlaceholder: 'Enter an IP to check the allowlist',
+  check: 'Check',
+  protected: 'Protected by {matched}',
+  notMatched: 'Not allowlisted — may be blocked',
+  keywordPlaceholder: 'Address keyword',
+  col: {
+    cidr: 'Address / subnet',
+    mask: 'Mask',
+    type: 'Type',
+    remark: 'Note',
+    createdBy: 'Created by',
+    actions: 'Actions',
+  },
+  type: {
+    cidr: 'CIDR subnet',
+    single: 'Single IP',
+  },
+  confirmDelete: 'This address will no longer be protected. Delete it?',
+  dialog: {
+    title: 'Add to allowlist',
+    ip: 'IP / CIDR',
+    ipPlaceholder: 'e.g. 203.0.113.0/24',
+    unblockExisting: 'Unblock existing',
+  },
+  importDialog: {
+    title: 'Bulk import allowlist',
+    hint: 'One IP or CIDR per line; inline # comments allowed; /8 is the widest subnet accepted.',
+    placeholder: '203.0.113.0/24\n198.51.100.10 # example',
+  },
+  saved: 'Saved; {n} task(s) unblocked',
+  imported: '{created} imported, {skipped} skipped, {errors} failed',
+  deleted: 'Deleted',
+}

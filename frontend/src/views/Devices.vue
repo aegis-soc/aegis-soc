@@ -1,67 +1,67 @@
 <template>
   <div class="page">
     <div class="page-header">
-      <div><h2 class="page-title">设备管理</h2><p class="page-desc">选择插件后自动生成配置表单；地址、业务参数、凭据分开填写，凭据只存环境变量名</p></div>
-      <el-button type="primary" :icon="Plus" @click="openCreate">新增设备</el-button>
+      <div><h2 class="page-title">{{ t('devices.title') }}</h2><p class="page-desc">{{ t('devices.desc') }}</p></div>
+      <el-button type="primary" :icon="Plus" @click="openCreate">{{ t('devices.add') }}</el-button>
     </div>
 
     <div class="table-card">
       <el-table :data="rows" size="small" stripe>
-        <el-table-column prop="device_code" label="设备编码" width="150" class-name="mono" />
-        <el-table-column prop="name" label="名称" min-width="140" />
-        <el-table-column prop="plugin_code" label="插件" width="130" />
-        <el-table-column label="设备地址" min-width="190">
+        <el-table-column prop="device_code" :label="t('devices.col.code')" width="150" class-name="mono" />
+        <el-table-column prop="name" :label="t('devices.col.name')" min-width="140" />
+        <el-table-column prop="plugin_code" :label="t('devices.col.plugin')" width="130" />
+        <el-table-column :label="t('devices.col.address')" min-width="190">
           <template #default="{ row }"><span class="mono">{{ addressOf(row) }}</span></template>
         </el-table-column>
-        <el-table-column prop="vendor" label="厂商" width="110" />
-        <el-table-column prop="region" label="区域" width="100" />
-        <el-table-column prop="status" label="状态" width="90">
-          <template #default="{ row }"><el-tag size="small" :type="row.status === 'online' ? 'success' : 'info'">{{ row.status }}</el-tag></template>
+        <el-table-column prop="vendor" :label="t('devices.col.vendor')" width="110" />
+        <el-table-column prop="region" :label="t('devices.col.region')" width="100" />
+        <el-table-column prop="status" :label="t('devices.col.status')" width="100">
+          <template #default="{ row }"><el-tag size="small" :type="row.status === 'online' ? 'success' : 'info'">{{ enumLabel('enums.deviceStatus', row.status) }}</el-tag></template>
         </el-table-column>
-        <el-table-column label="自动下发" width="90">
-          <template #default="{ row }">{{ row.auto_dispatch ? '是' : '否' }}</template>
+        <el-table-column :label="t('devices.col.autoDispatch')" width="100">
+          <template #default="{ row }">{{ row.auto_dispatch ? t('common.label.yes') : t('common.label.no') }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="210" fixed="right">
+        <el-table-column :label="t('devices.col.actions')" width="250" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="test(row)">连通性测试</el-button>
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-popconfirm title="确认删除该设备？" @confirm="remove(row)">
-              <template #reference><el-button link type="danger">删除</el-button></template>
+            <el-button link type="primary" @click="test(row)">{{ t('devices.testConnectivity') }}</el-button>
+            <el-button link type="primary" @click="openEdit(row)">{{ t('common.action.edit') }}</el-button>
+            <el-popconfirm :title="t('devices.confirmDelete')" @confirm="remove(row)">
+              <template #reference><el-button link type="danger">{{ t('common.action.delete') }}</el-button></template>
             </el-popconfirm>
           </template>
         </el-table-column>
       </el-table>
     </div>
 
-    <el-dialog v-model="dialog" :title="editing ? '编辑设备' : '新增设备'" width="720px" top="5vh">
-      <el-form :model="form" label-width="120px">
-        <el-form-item label="设备编码" required>
-          <el-input v-model="form.device_code" :disabled="!!editing" placeholder="如 fw-hq-01" />
+    <el-dialog v-model="dialog" :title="editing ? t('devices.dialog.edit') : t('devices.dialog.create')" width="720px" top="5vh">
+      <el-form :model="form" label-width="140px">
+        <el-form-item :label="t('devices.form.code')" required>
+          <el-input v-model="form.device_code" :disabled="!!editing" :placeholder="t('devices.form.codePlaceholder')" />
         </el-form-item>
-        <el-form-item label="名称" required>
-          <el-input v-model="form.name" placeholder="如 总部出口防火墙" />
+        <el-form-item :label="t('devices.form.name')" required>
+          <el-input v-model="form.name" :placeholder="t('devices.form.namePlaceholder')" />
         </el-form-item>
-        <el-form-item label="插件" required>
+        <el-form-item :label="t('devices.form.plugin')" required>
           <el-select v-model="form.plugin_code" :disabled="!!editing" style="width: 100%" @change="onPluginChange">
-            <el-option v-for="p in plugins" :key="p.plugin_code" :label="`${p.plugin_name}（${p.plugin_code}）`" :value="p.plugin_code" />
+            <el-option v-for="p in plugins" :key="p.plugin_code" :label="`${p.plugin_name} (${p.plugin_code})`" :value="p.plugin_code" />
           </el-select>
           <div v-if="currentPlugin?.description" class="field-hint">{{ currentPlugin.description }}</div>
         </el-form-item>
 
         <template v-if="currentPlugin">
           <div class="form-switch">
-            <el-switch v-model="advanced" active-text="高级模式（直接编辑 JSON）" @change="toggleAdvanced" />
+            <el-switch v-model="advanced" :active-text="t('devices.form.advanced')" @change="toggleAdvanced" />
           </div>
 
           <div v-if="advanced" class="advanced-box">
             <el-input v-model="configText" type="textarea" :rows="10" class="mono" spellcheck="false" />
-            <div class="field-hint">整段 JSON 会原样保存；分层的 connection / params 写法与扁平写法都支持。</div>
+            <div class="field-hint">{{ t('devices.form.advancedHint') }}</div>
           </div>
 
           <template v-else>
             <div v-for="(f, i) in fields" :key="f.key">
               <div v-if="i === 0 || fields[i - 1].group !== f.group" class="group-title">
-                {{ f.group === 'connection' ? '① 设备连接' : '② 业务参数' }}
+                {{ f.group === 'connection' ? t('devices.form.groupConnection') : t('devices.form.groupParams') }}
               </div>
               <el-form-item :label="f.label" :required="f.required">
                 <div class="field-wrap">
@@ -82,20 +82,20 @@
               </el-form-item>
             </div>
 
-            <el-form-item label="凭据环境变量">
-              <el-input v-model="form.credential_ref" :placeholder="currentPlugin.manifest?.credential_hint || '如 FW_PASSWORD'" />
+            <el-form-item :label="t('devices.form.credential')">
+              <el-input v-model="form.credential_ref" :placeholder="currentPlugin.manifest?.credential_hint || t('devices.form.credentialPlaceholder')" />
               <div class="field-hint">
-                填<b>变量名</b>，不是口令本身。在服务器 .env 里设置
+                {{ t('devices.form.credentialBefore') }}
                 <code class="mono">{{ form.credential_ref || currentPlugin.manifest?.credential_hint || 'XXX_CRED' }}</code>
-                后重启 api 与 worker。
+                {{ t('devices.form.credentialAfter') }}
               </div>
             </el-form-item>
           </template>
         </template>
 
-        <el-form-item label="厂商"><el-input v-model="form.vendor" /></el-form-item>
-        <el-form-item label="区域"><el-input v-model="form.region" /></el-form-item>
-        <el-form-item label="允许自动下发"><el-switch v-model="form.auto_dispatch" /></el-form-item>
+        <el-form-item :label="t('devices.form.vendor')"><el-input v-model="form.vendor" /></el-form-item>
+        <el-form-item :label="t('devices.form.region')"><el-input v-model="form.region" /></el-form-item>
+        <el-form-item :label="t('devices.form.autoDispatch')"><el-switch v-model="form.auto_dispatch" /></el-form-item>
 
         <el-alert
           v-if="dialogTest.message" :type="dialogTest.success ? 'success' : 'error'" :closable="false"
@@ -105,15 +105,15 @@
 
       <template #footer>
         <div class="dialog-footer">
-          <el-button :loading="testing" @click="testInDialog">测试连接</el-button>
+          <el-button :loading="testing" @click="testInDialog">{{ t('devices.form.testConnection') }}</el-button>
           <span style="flex: 1" />
-          <el-button @click="dialog = false">取消</el-button>
-          <el-button type="primary" @click="submit">{{ editing ? '保存' : '提交' }}</el-button>
+          <el-button @click="dialog = false">{{ t('common.action.cancel') }}</el-button>
+          <el-button type="primary" @click="submit">{{ editing ? t('devices.form.save') : t('devices.form.submit') }}</el-button>
         </div>
       </template>
     </el-dialog>
 
-    <el-dialog v-model="resultVisible" title="连通性测试结果" width="460px">
+    <el-dialog v-model="resultVisible" :title="t('devices.result.title')" width="460px">
       <el-alert :type="testResult.success ? 'success' : 'error'" :closable="false" :title="testResult.message" />
       <pre v-if="testResult.raw" class="mono" style="max-height: 240px; overflow: auto; background: #f5f7fa; padding: 10px">{{ testResult.raw }}</pre>
     </el-dialog>
@@ -122,10 +122,12 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { api } from '../api'
 
+const { t, te } = useI18n()
 const rows = ref([])
 const plugins = ref([])
 const dialog = ref(false)
@@ -139,6 +141,12 @@ const testing = ref(false)
 const dialogTest = reactive({ success: false, message: '' })
 const testResult = reactive({ success: false, message: '', raw: '' })
 
+function enumLabel(namespace, value) {
+  if (!value) return '-'
+  const key = `${namespace}.${value}`
+  return te(key) ? t(key) : value
+}
+
 const blankForm = () => ({
   device_code: '', name: '', plugin_code: 'mock', vendor: '', region: '', credential_ref: '', auto_dispatch: true,
 })
@@ -148,10 +156,11 @@ const currentPlugin = computed(() => plugins.value.find((p) => p.plugin_code ===
 const fields = computed(() => currentPlugin.value?.manifest?.config_fields || [])
 
 function placeholderOf(f) {
-  if (f.default !== null && f.default !== undefined) return `默认 ${f.default}`
-  return f.required ? '必填' : ''
+  if (f.default !== null && f.default !== undefined) return t('devices.placeholder.default', { value: f.default })
+  return f.required ? t('devices.placeholder.required') : ''
 }
 function hintOf(f) {
+  // 插件 manifest 里的字段说明是插件作者写的，不随界面语言变化
   const text = String(f.description || '').replace(/^[^（(]*[（(]/, '').replace(/[）)]\s*$/, '')
   return text || f.description
 }
@@ -213,7 +222,7 @@ function buildConfig() {
       const text = String(raw ?? '').trim()
       if (!text) out = undefined
       else {
-        try { out = JSON.parse(text) } catch (e) { throw new Error(`${f.label} 不是合法 JSON`) }
+        try { out = JSON.parse(text) } catch (e) { throw new Error(t('devices.err.badJson', { label: f.label })) }
       }
     } else {
       const text = String(raw ?? '').trim()
@@ -233,7 +242,7 @@ function currentConfig() {
   const text = String(configText.value || '{}').trim()
   if (!text) return {}
   const parsed = JSON.parse(text)
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('配置必须是 JSON 对象')
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error(t('devices.err.configObject'))
   return parsed
 }
 
@@ -246,7 +255,7 @@ function toggleAdvanced(on) {
       distribute(parsed)
     }
   } catch (e) {
-    ElMessage.error(`JSON 解析失败：${e.message}`)
+    ElMessage.error(t('devices.err.jsonParse', { msg: e.message }))
     advanced.value = !on
   }
 }
@@ -307,14 +316,14 @@ function validateRequired() {
     return f.required && (v === '' || v === null || v === undefined)
   })
   if (missing.length) {
-    ElMessage.error(`请填写：${missing.map((f) => f.label).join('、')}`)
+    ElMessage.error(t('devices.err.missing', { fields: missing.map((f) => f.label).join(', ') }))
     return false
   }
   return true
 }
 
 async function submit() {
-  if (!form.device_code || !form.name) { ElMessage.error('设备编码与名称必填'); return }
+  if (!form.device_code || !form.name) { ElMessage.error(t('devices.err.deviceRequired')); return }
   if (!advanced.value && !validateRequired()) return
   let config_json
   try {
@@ -329,10 +338,10 @@ async function submit() {
         name: form.name, vendor: form.vendor, region: form.region,
         config_json, credential_ref: form.credential_ref, auto_dispatch: form.auto_dispatch,
       })
-      ElMessage.success('设备已保存')
+      ElMessage.success(t('devices.toast.saved'))
     } else {
       await api.addDevice({ ...form, config_json })
-      ElMessage.success('设备已创建')
+      ElMessage.success(t('devices.toast.created'))
     }
     dialog.value = false
     load()
@@ -352,7 +361,8 @@ async function testInDialog() {
   try {
     const res = await api.testPlugin({ plugin_code: form.plugin_code, config_json })
     dialogTest.success = !!res.success
-    dialogTest.message = res.message || (res.success ? '连接正常' : '连接失败')
+    // 插件返回的消息由插件本身决定，没有翻译；只在缺省时补一句
+    dialogTest.message = res.message || (res.success ? t('devices.toast.connected') : t('devices.toast.failed'))
   } catch (e) { /* 拦截器已提示 */ } finally {
     testing.value = false
   }
@@ -367,7 +377,7 @@ async function test(row) {
 }
 
 async function remove(row) {
-  try { await api.deleteDevice(row.id); ElMessage.success('已删除'); load() } catch (e) { /* 拦截器已提示 */ }
+  try { await api.deleteDevice(row.id); ElMessage.success(t('devices.toast.deleted')); load() } catch (e) { /* 拦截器已提示 */ }
 }
 
 onMounted(load)
@@ -390,7 +400,7 @@ onMounted(load)
   margin-top: 2px;
 }
 .field-hint code { padding: 0 4px; background: var(--el-fill-color-light); border-radius: 3px; }
-.form-switch { margin: 0 0 12px 120px; }
+.form-switch { margin: 0 0 12px 140px; }
 .advanced-box { margin-bottom: 8px; }
 .dialog-footer { display: flex; align-items: center; width: 100%; }
 </style>

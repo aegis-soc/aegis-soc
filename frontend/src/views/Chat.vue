@@ -2,22 +2,19 @@
   <div class="page">
     <div class="page-header">
       <div>
-        <h2 class="page-title">人机对话</h2>
-        <p class="page-desc">
-          用中文提问，系统自动判断是查平台数据（黑名单 / 告警 / 下发 / 设备）还是查 Graylog 三流日志，
-          给出结论 + 明细 + 编译后的查询。只读、可审计，不会改动任何数据。
-        </p>
+        <h2 class="page-title">{{ t('chat.title') }}</h2>
+        <p class="page-desc">{{ t('chat.desc') }}</p>
       </div>
       <div style="display: flex; gap: 8px">
-        <el-button :icon="Refresh" :loading="loadingSessions" @click="loadSessions">刷新会话</el-button>
-        <el-button type="primary" :icon="Plus" @click="newSession">新对话</el-button>
+        <el-button :icon="Refresh" :loading="loadingSessions" @click="loadSessions">{{ t('chat.refreshSessions') }}</el-button>
+        <el-button type="primary" :icon="Plus" @click="newSession">{{ t('chat.newChat') }}</el-button>
       </div>
     </div>
 
     <div class="chat-wrap">
       <aside class="chat-aside">
-        <div class="aside-title">我的会话</div>
-        <div v-if="!sessions.length" class="aside-empty">还没有会话，右侧直接提问即可</div>
+        <div class="aside-title">{{ t('chat.mySessions') }}</div>
+        <div v-if="!sessions.length" class="aside-empty">{{ t('chat.noSessions') }}</div>
         <div
           v-for="item in sessions" :key="item.id"
           class="session-item" :class="{ active: item.id === sessionId }"
@@ -25,7 +22,7 @@
         >
           <div class="session-title">{{ item.title }}</div>
           <div class="session-meta">
-            <span>{{ item.message_count }} 条</span>
+            <span>{{ t('chat.messageCount', { n: item.message_count }) }}</span>
             <span>{{ fmtTime(item.updated_at) }}</span>
             <el-icon class="session-del" @click.stop="removeSession(item.id)"><Delete /></el-icon>
           </div>
@@ -35,15 +32,15 @@
       <section class="chat-main">
         <div ref="scroller" class="chat-body">
           <div v-if="!messages.length" class="empty">
-            <div class="empty-title">问点什么？</div>
-            <div class="empty-sub">规则解析，不依赖大模型；问法里的时间、topN、维度都能识别。</div>
+            <div class="empty-title">{{ t('chat.emptyTitle') }}</div>
+            <div class="empty-sub">{{ t('chat.emptySub') }}</div>
             <div class="chips">
               <div v-for="tip in suggestions" :key="tip" class="chip" @click="fill(tip)">{{ tip }}</div>
             </div>
             <div v-if="catalog.length" class="catalog">
               <div v-for="src in catalog" :key="src.key" class="catalog-item">
                 <span class="catalog-name">{{ src.label }}</span>
-                <span class="catalog-dims">可看：{{ src.dims.map((d) => d.label).join('、') }}</span>
+                <span class="catalog-dims">{{ t('chat.catalogCanSee', { dims: src.dims.map((d) => d.label).join('、') }) }}</span>
               </div>
             </div>
           </div>
@@ -71,9 +68,9 @@
                       <tbody>
                         <tr v-for="(row, ri) in block.rows" :key="ri">
                           <td v-for="col in block.columns" :key="col.key">
-                            <el-tag v-if="col.key === 'blocked' && row.internal" size="small" type="info">内网</el-tag>
+                            <el-tag v-if="col.key === 'blocked' && row.internal" size="small" type="info">{{ t('chat.table.internal') }}</el-tag>
                             <el-tag v-else-if="col.key === 'blocked'" size="small" :type="row.blocked ? 'success' : 'warning'">
-                              {{ row.blocked ? '已封' : '未封' }}
+                              {{ row.blocked ? t('chat.table.blocked') : t('chat.table.unblocked') }}
                             </el-tag>
                             <span v-else-if="col.key === 'value'">{{ fmtNum(row.value) }}</span>
                             <span v-else-if="col.key === 'label'" class="cell-key">{{ row.label }}</span>
@@ -82,7 +79,7 @@
                         </tr>
                       </tbody>
                     </table>
-                    <div v-if="block.truncated" class="block-hint">按前 {{ block.rows.length }} 条展示，不是全量</div>
+                    <div v-if="block.truncated" class="block-hint">{{ t('chat.table.truncated', { n: block.rows.length }) }}</div>
                   </div>
 
                   <div v-else-if="block.type === 'bar'" class="bars">
@@ -107,30 +104,30 @@
                 </div>
 
                 <el-collapse v-if="msg.trace" class="trace">
-                  <el-collapse-item title="查看查询详情（怎么理解这句话的）" :name="index">
+                  <el-collapse-item :title="t('chat.trace.title')" :name="index">
                     <div class="trace-row">
-                      <span>路由：{{ msg.trace.route }}</span>
-                      <span v-if="msg.trace.confidence !== undefined">置信度：{{ msg.trace.confidence }}</span>
-                      <span v-if="msg.trace.elapsed_ms !== undefined">耗时：{{ msg.trace.elapsed_ms }} ms</span>
-                      <span v-if="msg.trace.matched && msg.trace.matched.length">命中：{{ msg.trace.matched.join('、') }}</span>
+                      <span>{{ t('chat.trace.route', { value: msg.trace.route }) }}</span>
+                      <span v-if="msg.trace.confidence !== undefined">{{ t('chat.trace.confidence', { value: msg.trace.confidence }) }}</span>
+                      <span v-if="msg.trace.elapsed_ms !== undefined">{{ t('chat.trace.elapsed', { ms: msg.trace.elapsed_ms }) }}</span>
+                      <span v-if="msg.trace.matched && msg.trace.matched.length">{{ t('chat.trace.matched', { list: msg.trace.matched.join('、') }) }}</span>
                     </div>
                     <div v-for="(query, qi) in msg.trace.queries || []" :key="qi" class="trace-query">
                       <div class="trace-sub">
-                        <span>数据源 {{ query.source || '三流日志' }}</span>
-                        <span v-if="query.group_by">按 {{ query.group_by }}</span>
+                        <span>{{ t('chat.trace.source', { value: query.source || t('chat.trace.defaultSource') }) }}</span>
+                        <span v-if="query.group_by">{{ t('chat.trace.groupBy', { value: query.group_by }) }}</span>
                         <span v-if="query.query_desc">{{ query.query_desc }}</span>
                         <span v-if="query.window">{{ query.window.start }} → {{ query.window.end }}</span>
-                        <span v-if="query.fetched !== null && query.fetched !== undefined">扫描 {{ query.fetched }} 条 / 命中 {{ query.matched }}</span>
+                        <span v-if="query.fetched !== null && query.fetched !== undefined">{{ t('chat.trace.scanned', { fetched: query.fetched, matched: query.matched }) }}</span>
                       </div>
                       <pre v-if="query.sql" class="sql">{{ query.sql }}</pre>
                       <div v-if="query.stream_stats && query.stream_stats.length" class="trace-sub">
                         <span v-for="st in query.stream_stats" :key="st.name">
-                          {{ st.name }}: {{ st.fetched ?? 0 }} 条{{ st.error ? '（失败）' : '' }}
+                          {{ st.name }}: {{ st.fetched ?? 0 }}{{ st.error ? t('chat.trace.failed') : '' }}
                         </span>
                       </div>
                     </div>
                     <div class="trace-foot">
-                      <el-button size="small" :icon="CopyDocument" @click="copy(msg.content)">复制结论</el-button>
+                      <el-button size="small" :icon="CopyDocument" @click="copy(msg.content)">{{ t('chat.trace.copy') }}</el-button>
                     </div>
                   </el-collapse-item>
                 </el-collapse>
@@ -141,7 +138,7 @@
           <div v-if="asking" class="msg assistant">
             <div class="bubble thinking">
               <span class="dot" /><span class="dot" /><span class="dot" />
-              <span class="thinking-text">正在解析意图并查询…</span>
+              <span class="thinking-text">{{ t('chat.thinking') }}</span>
             </div>
           </div>
         </div>
@@ -149,13 +146,13 @@
         <div class="chat-input">
           <el-input
             v-model="question" type="textarea" :rows="2" resize="none" maxlength="300" show-word-limit
-            placeholder="例如：分析黑名单中来源 top10 和 top 国家 / 最近 3 天各设备有未拦截的 IP 日志"
+            :placeholder="t('chat.input.placeholder')"
             @keydown.enter.exact.prevent="submit"
           />
           <div class="input-actions">
-            <span class="input-hint">Enter 发送 · Shift+Enter 换行 · 只读查询，每分钟最多 20 次</span>
+            <span class="input-hint">{{ t('chat.input.hint') }}</span>
             <el-button type="primary" :icon="Promotion" :loading="asking" :disabled="!question.trim()" @click="submit">
-              发送
+              {{ t('chat.input.send') }}
             </el-button>
           </div>
         </div>
@@ -165,11 +162,14 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { nextTick, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { CopyDocument, Delete, Plus, Promotion, Refresh } from '@element-plus/icons-vue'
 import { api } from '../api'
+import { store } from '../store'
 
+const { t } = useI18n()
 const sessions = ref([])
 const sessionId = ref(null)
 const messages = ref([])
@@ -221,7 +221,7 @@ async function openSession(id) {
 
 async function removeSession(id) {
   try {
-    await ElMessageBox.confirm('删除后这段对话记录不可恢复，确定删除？', '删除会话', { type: 'warning' })
+    await ElMessageBox.confirm(t('chat.confirmDelete.message'), t('chat.confirmDelete.title'), { type: 'warning' })
   } catch (e) { return }
   try {
     await api.chatDeleteSession(id)
@@ -255,7 +255,7 @@ async function submit() {
   } catch (e) {
     messages.value.push({
       role: 'assistant',
-      content: '这次没查成，可以换个问法再试一次。',
+      content: t('chat.failed'),
       blocks: [],
       trace: null,
       suggestions: [],
@@ -275,16 +275,17 @@ function scrollBottom() {
 async function copy(text) {
   try {
     await navigator.clipboard.writeText(text)
-    ElMessage.success('已复制')
+    ElMessage.success(t('chat.trace.copied'))
   } catch (e) {
-    ElMessage.warning('浏览器不允许复制，请手动选择文本')
+    ElMessage.warning(t('chat.trace.copyDenied'))
   }
 }
 
 function fmtNum(value) {
   const number = Number(value || 0)
-  if (Number.isInteger(number)) return number.toLocaleString('zh-CN')
-  return number.toLocaleString('zh-CN', { maximumFractionDigits: 1 })
+  const locale = store.locale === 'en-US' ? 'en-US' : 'zh-CN'
+  if (Number.isInteger(number)) return number.toLocaleString(locale)
+  return number.toLocaleString(locale, { maximumFractionDigits: 1 })
 }
 
 function fmtTime(value) {
