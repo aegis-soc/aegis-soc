@@ -6,6 +6,7 @@ export default {
   submit: '登 录',
   footer: '默认账号首次登录需修改口令 · Apache 2.0',
   needBoth: '请输入用户名和口令',
+  failed: '用户名或口令错误',
   pwdUpdated: '口令已更新',
   change: {
     title: '修改默认口令',

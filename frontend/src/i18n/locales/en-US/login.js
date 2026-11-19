@@ -6,6 +6,7 @@ export default {
   submit: 'Sign in',
   footer: 'The default account must change its password on first sign-in · Apache 2.0',
   needBoth: 'Enter both username and password',
+  failed: 'Incorrect username or password',
   pwdUpdated: 'Password updated',
   change: {
     title: 'Change the default password',

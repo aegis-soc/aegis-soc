@@ -1,6 +1,10 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { logout, store } from '../store'
+import { i18n } from '../i18n'
+
+// 拦截器不在组件 setup 里，走 i18n.global（legacy:false 下响应式，切语言即时生效）
+const t = (key) => i18n.global.t(key)
 
 const http = axios.create({ baseURL: '/api/v1', timeout: 15000 })
 
@@ -14,17 +18,23 @@ http.interceptors.response.use(
     if (response.config.responseType === 'blob') return response.data
     const body = response.data
     if (body && body.code !== 0) {
-      ElMessage.error(body.msg || '请求失败')
+      ElMessage.error(body.msg || t('common.tip.requestFailed'))
       return Promise.reject(new Error(body.msg))
     }
     return body ? body.data : null
   },
   (error) => {
     const status = error.response?.status
-    const msg = error.response?.data?.msg || error.message || '网络异常'
+    const msg = error.response?.data?.msg || error.message || t('common.tip.networkError')
     if (status === 401) {
-      logout()
-      if (window.location.pathname !== '/login') window.location.assign('/login')
+      // 登录页自己的 401（口令错、原口令错）之前被静默吞掉，页面毫无反应；
+      // 这里补一条提示。其余场景（会话过期）仍是登出 + 跳登录页。
+      if (window.location.pathname === '/login') {
+        ElMessage.error(t('login.failed'))
+      } else {
+        logout()
+        window.location.assign('/login')
+      }
     } else {
       ElMessage.error(`${status || ''} ${msg}`)
     }
