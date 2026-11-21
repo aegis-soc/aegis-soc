@@ -17,4 +17,6 @@ export default {
   tasks: '任务日志',
   auditOps: '操作审计',
   system: '系统设置',
+  lba: '行为分析',
+  loginCenter: '登录行为分析',
 }

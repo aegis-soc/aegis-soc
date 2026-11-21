@@ -6,7 +6,7 @@ import { i18n } from '../i18n'
 // 拦截器不在组件 setup 里，走 i18n.global（legacy:false 下响应式，切语言即时生效）
 const t = (key) => i18n.global.t(key)
 
-const http = axios.create({ baseURL: '/api/v1', timeout: 15000 })
+export const http = axios.create({ baseURL: '/api/v1', timeout: 15000 })
 
 http.interceptors.request.use((config) => {
   if (store.token) config.headers.Authorization = `Bearer ${store.token}`

@@ -96,6 +96,12 @@ const menus = [
     ],
   },
   {
+    index: 'g-lba', titleKey: 'menu.lba', icon: 'DataAnalysis',
+    children: [
+      { path: '/lba/login', titleKey: 'menu.loginCenter', icon: 'User' },
+    ],
+  },
+  {
     index: 'g-policy', titleKey: 'menu.policy', icon: 'SetUp',
     children: [
       { path: '/policies', titleKey: 'menu.policies', icon: 'Operation' },
