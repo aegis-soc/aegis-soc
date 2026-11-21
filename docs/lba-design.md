@@ -167,16 +167,16 @@ lba_risk_event
   block_task_id(一键封禁生成的黑名单任务ID，可空)
 
 lba_device
-  id, device_key, owner_username, ua_raw, ua_normalized,
-  device_type(pc/mobile/tablet/unknown), managed(managed/unmanaged/unknown),
+  id, device_key, owner_username, ua_raw, ua_class(feishu/mobile/pc/unknown),
+  browser(chrome/edge/firefox/feishu/wecom/other), browser_ver,
+  device_type, managed(managed/unknown；ua_feishu 命中=受管(推断)),
   first_seen, last_seen
-  -- device_key 生成优先级：网关设备指纹字段 > sha1(username + ua_normalized)
-  -- managed 来源：零信任平台受管设备标记（日志字段或受管清单接口），拿不到置 unknown
+  -- device_key = sha1(username + ua_class + browser 主版本)，见 11.1
 
 lba_device_ip
-  id, device_key, ip, country, city, asn, asn_org,
+  id, device_key, ip, country, city, isp,
   first_seen, last_seen
-  -- IP→(国家/城市) 走 ip2region；ASN 走 GeoLite2-ASN 离线库（见 11.2）
+  -- 归属地板件只接 ip2region（国家/省市/ISP），无 ASN，见 11.2
 
 lba_profile_snapshot
   id, entity_type(ip/username/ua/device/app_id), entity_value,
@@ -328,31 +328,21 @@ lba_collect_state
 
 ---
 
-## 11. 待确认的数据源问题（决定界面能不能落地，需先对齐）
+## 11. 数据源决策（已确认，2026-11-21）
 
-### 11.1 设备身份从哪来（影响「识别设备数量」「每台设备」整套能力）
+### 11.1 设备身份：来自网关日志的 UA 分类字段 ✅
 
-零信任网关日志的标准字段里没有设备指纹，三个方案按优先级：
+Graylog 网关日志自带 UA 分类字段（`ua_pc` / `ua_mobile` / `ua_feishu` 等，实际字段名以 `list_fields` 实测为准，collector 做显式映射）。设备口径由此派生：
 
-| 方案 | device_key 来源 | 受管设备标记 | 前提 |
-|---|---|---|---|
-| A（最优） | 网关日志自带 `device_id` / 主机名 / 零信任客户端上报字段 | 日志自带 `device_managed` 字段 | **需实测 `list_fields` 确认网关日志有这些字段** |
-| B | 零信任平台管理接口拉受管设备清单，与日志 username 关联 | 清单自带 | 平台有 API 且授权可行 |
-| C（兜底） | `sha1(username + UA 规范化)` 近似设备——同 UA 视为同设备 | 全部 `unknown` | 会把「同人换浏览器」误判成多设备，看板口径要标注为「终端指纹（近似）」 |
+- **设备类型**：`ua_class` = feishu / mobile / pc / unknown（多字段同时命中时优先级 feishu > mobile > pc）
+- **设备标识**：`device_key = sha1(username + ua_class + 浏览器主版本)`——同一人「移动端-Chrome」和「PC-Chrome」是两台设备，同人同端升级小版本仍是同一台
+- **浏览器**：从原始 UA 解析（Chrome / Edge / Firefox / 飞书 / 企业微信 / WeChat 内置 / 其他），展示如「移动端-Chrome」「PC-Chrome 7.0」
+- **受管标记**：UA 只能推测——`ua_feishu=true` 视为受管（企业统一走飞书/零信任客户端），其余置 `unknown`；界面标签显示「受管(推断) / 未识别」，**不做绝对断言**
 
-**结论：先拿一条真实网关日志做 `list_fields` 实测再定**；界面先用 C 的口径开发 mock，字段一确认即切 A。
+### 11.2 归属地：只用 ip2region ✅
 
-### 11.2 ASN 数据源
+不引入 ASN 库。IP 详情显示 **国家 / 省·市 / 运营商**（ip2region 的 ISP 字段），列名用「运营商」，不出现「ASN」。
 
-ip2region 只有国家/省市/运营商（ISP），**没有 ASN**。两个选择：
+### 11.3 「IP 变化」口径 ✅
 
-| 方案 | 成本 | 效果 |
-|---|---|---|
-| A（推荐） | MaxMind GeoLite2-ASN 离线库（免费、mmdb 约 6MB、每周更新），接入方式复用现有 geoip 离线加载机制 | 真正的 ASN + 组织名（如 AS4134 Chinanet） |
-| B | 用 ip2region 的 ISP 字段近似展示为「运营商」 | 零成本，但没有 ASN 号 |
-
-界面列名可做成兼容的：有 ASN 库显示「ASN」，没有就显示「运营商」。
-
-### 11.3 「IP 变化」的口径
-
-示例里出现「3个IP」「2个国家」「2个城市」三种写法，建议统一口径：**统计窗口默认 7 天**（可调），显示 `N个IP / M个国家`，城市只在同国家多城市时展开——避免口径不一致导致运营看不懂数字怎么来的。
+统一为 **7 天窗口内 `N个IP / M个国家`**（窗口天数进 `sys_config` 可调），所有出现该指标的地方（登录行为中心列表、用户详情、画像）同一口径。
