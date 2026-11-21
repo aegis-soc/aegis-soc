@@ -166,8 +166,20 @@ lba_risk_event
   occur_time, status(未处置/已忽略/已处置), handle_user, handle_comment,
   block_task_id(一键封禁生成的黑名单任务ID，可空)
 
+lba_device
+  id, device_key, owner_username, ua_raw, ua_normalized,
+  device_type(pc/mobile/tablet/unknown), managed(managed/unmanaged/unknown),
+  first_seen, last_seen
+  -- device_key 生成优先级：网关设备指纹字段 > sha1(username + ua_normalized)
+  -- managed 来源：零信任平台受管设备标记（日志字段或受管清单接口），拿不到置 unknown
+
+lba_device_ip
+  id, device_key, ip, country, city, asn, asn_org,
+  first_seen, last_seen
+  -- IP→(国家/城市) 走 ip2region；ASN 走 GeoLite2-ASN 离线库（见 11.2）
+
 lba_profile_snapshot
-  id, entity_type(ip/username/ua/app_id), entity_value,
+  id, entity_type(ip/username/ua/device/app_id), entity_value,
   stats_json(请求数、URL集合、终端分布、响应码分布、应用分布、最近访问),
   snapshot_time
 
@@ -200,6 +212,8 @@ lba_collect_state
 | 模块 | 接口 |
 |---|---|
 | 大盘 | `GET /lba/dashboard/overview`（总量、等级分布、时序）；`GET /lba/dashboard/top`（TOP IP/账号/UA/应用/401 来源） |
+| 登录行为中心 | `GET /lba/login/overview`（4 KPI：今日活跃用户 / 识别设备数 / 待核查异常用户 / 高风险用户）；`GET /lba/login/anomaly-users`（用户异常行为列表：用户、设备台数与类型、IP 变化摘要、当前风险） |
+| 用户详情 | `GET /lba/profile/user/{username}`：24h 访问时间线、设备列表（每台：UA、类型、受管标记、关联 IP 含国家/城市/ASN、最近活跃）、风险变化历史（时间点 + 等级变化 + 触发原因=命中策略与条件值快照） |
 | 风险事件 | `GET /lba/event/list`（分页多条件）；`GET /lba/event/{id}`；`PUT /lba/event/{id}/handle`；`POST /lba/event/export`；`POST /lba/event/{id}/block`（一键封禁，走黑名单 API） |
 | 策略 | `GET/POST/PUT/DELETE /lba/policy`；`POST /lba/policy/test`（模拟事件测命中）；`POST /lba/policy/{id}/toggle` |
 | 画像 | `GET /lba/profile/{type}/{value}`；`GET /lba/profile/search` |
@@ -215,9 +229,11 @@ lba_collect_state
 
 | 页面 | 内容 |
 |---|---|
+| **登录行为分析中心**（用户/设备维度看板，新需求） | 4 张 KPI 卡：**今日活跃用户**（24h distinct username）、**识别设备数量**（库内累计 device 数）、**待核查异常用户**（存在未处置中/高风险事件的用户数）、**高风险用户**（当前风险等级为高的用户数）；下方**用户异常行为列表**：用户 / 设备（台数+类型，如「2台设备」「1台手机」）/ IP 变化（如「3个IP」「2个国家」「2个城市」）/ 风险等级；行点击进入用户详情页；支持按风险等级、时间范围筛选 |
+| **用户详情页**（从登录行为中心/事件/画像均可跳转） | ① **最近 24h 访问时间线**（时间、应用、URL、方法、响应码、当时 IP）；② **设备卡片列表**：每台设备的 UA 原文、设备类型（PC/手机/平板）、**是否企业受管设备**（managed/unmanaged/unknown）、关联过的 IP（每 IP 标注国家、城市、ASN/运营商、最近活跃）、设备最近一次活跃时间；③ **风险变化历史**：风险等级升降时间点 + 触发原因（命中策略名 + 条件命中值快照，如「1min 内 401×7」）；④ 快捷动作：按该用户任一 IP 一键封禁、跳转该用户风险事件列表 |
 | 行为分析大盘 | 卡片（今日接入量、风险事件数、高风险数、待处置）+ 事件时序 + 等级/标签饼图 + TOP 排行（IP/账号/UA/应用/401 来源）+ 待处置列表快捷处置 |
 | 风险事件 | 多条件筛选（时间/等级/IP/账号/UA/策略/状态/应用）；表格含 method、status_code、app_id、gateway_node；详情弹窗含命中策略说明、**一键溯源**、画像快捷跳转、**一键封禁** |
-| 画像查询 | 实体类型：IP / 用户名 / UA / **应用**；画像卡片：访问统计、终端分布、响应码分布、访问应用/URL 列表、历史命中、趋势 |
+| 画像查询 | 实体类型：IP / 用户名 / UA / **应用** / **设备**；画像卡片：访问统计、终端分布、响应码分布、访问应用/URL 列表、历史命中、趋势 |
 | 风险策略 | 列表 + 表单；**ConditionBuilder 可视化条件构建器**（字段下拉为零信任网关字段，运算符 + 窗口选择，产出 condition_json，不手写 JSON）；策略测试工具；启停 |
 | 日志溯源 | 轻量 Graylog 检索面板（时间/Stream/查询语句/字段/分页），底层转发 MCP；运营不用切 Graylog 页面 |
 | 采集状态 | 三个任务卡片：上次执行时间、成功/失败、拉取条数、去重命中、对账差值、缺口补偿记录 |
@@ -272,12 +288,13 @@ lba_collect_state
 - **先冻结 API 契约，再写页面**：响应结构（字段名、分页结构、枚举值）按第 5 节接口清单定死成文档，mock 只是契约的一个实现；切真实接口时前端一行不改
 - **mock 收在 api 层一个开关里**：`VITE_LBA_MOCK=true` 时 `src/api/lba.js` 返回本地 mock 数据（含分页、筛选、时间序列的仿真生成），组件里不出现任何 if(mock)；开关一关即接真后端
 
-页面开发顺序（按价值排序）：
+页面开发顺序（按价值排序，用户已确认前端先行）：
 
-1. **风险事件列表 + 详情**（含溯源弹窗、一键封禁按钮、处置流程）——LBA 的主战场，先定字段
-2. **风险策略 + ConditionBuilder**——schema 定型就锁死后端表设计
-3. **行为分析大盘**——依赖事件数据结构，最后做刚好
-4. 画像查询、采集状态页——结构简单，随手补
+1. **登录行为分析中心 + 用户详情页**——用户/设备/IP 三维看板是 LBA 的门面，先定「设备」「IP 变化」等关键口径
+2. **风险事件列表 + 详情**（含溯源弹窗、一键封禁按钮、处置流程）
+3. **风险策略 + ConditionBuilder**——schema 定型就锁死后端表设计
+4. **行为分析大盘**——依赖事件数据结构，最后做刚好
+5. 画像查询、采集状态页——结构简单，随手补
 
 ### Phase 1：最小可用（前端先行 → 后端按契约实现 → collector 收尾）
 
@@ -308,3 +325,34 @@ lba_collect_state
 4. **Graylog 资源保护**：collector 控制并发与查询频率，错峰执行 30min 任务；对账优先用 `aggregate_messages` 计数而非全量拉取
 5. **事件流的可靠性**：Redis Stream 有 MAXLEN 限幅 + consumer group ACK，引擎挂掉重启从上次 ACK 继续，不丢事件
 6. **字段映射以实测为准**：零信任网关日志真实字段名以 `list_fields` 为准，collector 配置里做显式映射表，不做隐式猜测
+
+---
+
+## 11. 待确认的数据源问题（决定界面能不能落地，需先对齐）
+
+### 11.1 设备身份从哪来（影响「识别设备数量」「每台设备」整套能力）
+
+零信任网关日志的标准字段里没有设备指纹，三个方案按优先级：
+
+| 方案 | device_key 来源 | 受管设备标记 | 前提 |
+|---|---|---|---|
+| A（最优） | 网关日志自带 `device_id` / 主机名 / 零信任客户端上报字段 | 日志自带 `device_managed` 字段 | **需实测 `list_fields` 确认网关日志有这些字段** |
+| B | 零信任平台管理接口拉受管设备清单，与日志 username 关联 | 清单自带 | 平台有 API 且授权可行 |
+| C（兜底） | `sha1(username + UA 规范化)` 近似设备——同 UA 视为同设备 | 全部 `unknown` | 会把「同人换浏览器」误判成多设备，看板口径要标注为「终端指纹（近似）」 |
+
+**结论：先拿一条真实网关日志做 `list_fields` 实测再定**；界面先用 C 的口径开发 mock，字段一确认即切 A。
+
+### 11.2 ASN 数据源
+
+ip2region 只有国家/省市/运营商（ISP），**没有 ASN**。两个选择：
+
+| 方案 | 成本 | 效果 |
+|---|---|---|
+| A（推荐） | MaxMind GeoLite2-ASN 离线库（免费、mmdb 约 6MB、每周更新），接入方式复用现有 geoip 离线加载机制 | 真正的 ASN + 组织名（如 AS4134 Chinanet） |
+| B | 用 ip2region 的 ISP 字段近似展示为「运营商」 | 零成本，但没有 ASN 号 |
+
+界面列名可做成兼容的：有 ASN 库显示「ASN」，没有就显示「运营商」。
+
+### 11.3 「IP 变化」的口径
+
+示例里出现「3个IP」「2个国家」「2个城市」三种写法，建议统一口径：**统计窗口默认 7 天**（可调），显示 `N个IP / M个国家`，城市只在同国家多城市时展开——避免口径不一致导致运营看不懂数字怎么来的。
