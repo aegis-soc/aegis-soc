@@ -6,6 +6,7 @@
         <p class="page-desc">{{ t('logSources.desc') }}</p>
       </div>
       <div class="head-actions">
+        <el-button :icon="Connection" @click="openMcp">{{ t('logSources.mcp.configure') }}</el-button>
         <el-button :icon="List" @click="openStreams" :loading="loadingStreams">
           {{ t('logSources.stream.fromGraylog') }}
         </el-button>
@@ -21,10 +22,18 @@
     >
       <template #default>
         <div style="margin-top: 6px">
+          <el-button size="small" type="primary" @click="openMcp">{{ t('logSources.mcp.configureNow') }}</el-button>
           <el-button size="small" @click="$router.push('/patrol')">{{ t('logSources.mcp.goPatrol') }}</el-button>
         </div>
       </template>
     </el-alert>
+
+    <div v-else-if="data.mcp.url" class="mcp-bar">
+      <span class="mcp-dot"></span>
+      <span class="mono">{{ data.mcp.url }}</span>
+      <span class="text-muted">{{ t('logSources.mcp.modeInline', { mode: data.mcp.mode || '-' }) }}</span>
+      <el-button link size="small" @click="openMcp">{{ t('logSources.mcp.edit') }}</el-button>
+    </div>
 
     <div class="stat-row">
       <div class="stat-card">
@@ -272,6 +281,54 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="mcpDialog.open" :title="t('logSources.mcp.title')" width="600px">
+      <el-alert
+        v-if="mcpDialog.info && !mcpDialog.info.error && mcpDialog.info.server && mcpDialog.info.server.name"
+        type="success" show-icon :closable="false" style="margin-bottom: 12px"
+        :title="t('logSources.mcp.connected', { name: mcpDialog.info.server.name, ver: mcpDialog.info.server.version || '-' })"
+      />
+      <el-alert
+        v-else-if="mcpDialog.info && mcpDialog.info.error"
+        type="error" show-icon :closable="false" style="margin-bottom: 12px"
+        :title="mcpDialog.info.error"
+      />
+      <el-form label-position="top" size="small">
+        <el-form-item :label="t('logSources.mcp.url')" required>
+          <el-input v-model="mcpForm.mcp_url" clearable placeholder="https://graylog.example.com/api/mcp" class="mono" />
+          <div class="form-hint">{{ t('logSources.mcp.urlHint') }}</div>
+        </el-form-item>
+        <el-form-item :label="t('logSources.mcp.token')">
+          <el-input
+            v-model="mcpForm.mcp_token" type="password" show-password clearable
+            :placeholder="mcpTokenSet ? t('logSources.mcp.tokenSet', { hint: mcpTokenHint || '-' }) : t('logSources.mcp.tokenPlaceholder')"
+          />
+          <div class="form-hint">{{ t('logSources.mcp.tokenHint') }}</div>
+        </el-form-item>
+        <el-form-item :label="t('logSources.mcp.auth')">
+          <el-select v-model="mcpForm.mcp_auth" style="width: 100%">
+            <el-option value="token" :label="t('logSources.mcp.authToken')" />
+            <el-option value="bearer" :label="t('logSources.mcp.authBearer')" />
+            <el-option value="basic" :label="t('logSources.mcp.authBasic')" />
+            <el-option value="raw" :label="t('logSources.mcp.authRaw')" />
+            <el-option value="none" :label="t('logSources.mcp.authNone')" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <div class="form-hint">
+        {{ mcpDialog.source === 'db' ? t('logSources.mcp.sourceDb') : t('logSources.mcp.sourceEnv') }}
+        · {{ t('logSources.mcp.plainHint') }}
+      </div>
+      <template #footer>
+        <el-button size="small" :loading="mcpTesting" @click="testMcp(false)">
+          {{ mcpTesting ? t('logSources.mcp.testing') : t('logSources.mcp.test') }}
+        </el-button>
+        <el-button size="small" @click="mcpDialog.open = false">{{ t('common.action.close') }}</el-button>
+        <el-button size="small" type="primary" :loading="mcpSaving" @click="saveMcp">
+          {{ t('logSources.form.save') }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -279,7 +336,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
-import { Refresh, List } from '@element-plus/icons-vue'
+import { Refresh, List, Connection } from '@element-plus/icons-vue'
 import api from '../api'
 import { store } from '../store'
 
@@ -304,6 +361,15 @@ const streamsLoaded = ref(false)
 const streamHint = ref('')
 const mcpReady = ref(false)
 const streamDialog = reactive({ open: false })
+
+// Graylog 接入：地址与 Token 存在巡检配置里（patrol_setting），
+// 这里只是把入口搬到数据源页，读写走同一对接口，不另造配置源。
+const mcpDialog = reactive({ open: false, info: null, source: '' })
+const mcpForm = reactive({ mcp_url: '', mcp_token: '', mcp_auth: 'token' })
+const mcpTokenSet = ref(false)
+const mcpTokenHint = ref('')
+const mcpTesting = ref(false)
+const mcpSaving = ref(false)
 
 const ROLE_BY_CODE = { ips: 'IPS', waf: 'WAF', ztna: 'ZTNA' }
 const suggestedRole = computed(() => ROLE_BY_CODE[drawer.row?.source_code] || '')
@@ -430,6 +496,77 @@ function onStreamPick(id) {
   }
 }
 
+async function openMcp() {
+  mcpDialog.open = true
+  mcpDialog.info = null
+  mcpForm.mcp_token = ''
+  try {
+    const cfg = await api.patrolConfig()
+    mcpForm.mcp_url = cfg.mcp_url || ''
+    mcpForm.mcp_auth = cfg.mcp_auth || 'token'
+    mcpTokenSet.value = !!cfg.token_set
+    mcpTokenHint.value = cfg.token_hint || ''
+    mcpDialog.source = cfg.source || ''
+  } catch (e) {
+    // 拦截器已提示
+  }
+  if (mcpForm.mcp_url) testMcp(true)
+}
+
+async function testMcp(silent) {
+  const url = (mcpForm.mcp_url || '').trim()
+  if (!url) {
+    if (!silent) ElMessage.warning(t('logSources.mcp.needUrl'))
+    return
+  }
+  mcpTesting.value = true
+  try {
+    const info = await api.patrolMcpTest({
+      mcp_url: url,
+      mcp_auth: mcpForm.mcp_auth,
+      mcp_token: mcpForm.mcp_token || undefined,
+    })
+    mcpDialog.info = info
+    if (!info?.error) {
+      // 地址变了，流清单必须重拉，否则下拉里还是旧 Graylog 的流
+      streamsLoaded.value = false
+      await loadStreams(true)
+    } else if (!silent) {
+      ElMessage.error(info.error)
+    }
+  } catch (e) {
+    // 拦截器已提示
+  } finally {
+    mcpTesting.value = false
+  }
+}
+
+async function saveMcp() {
+  const url = (mcpForm.mcp_url || '').trim()
+  if (!url) {
+    ElMessage.warning(t('logSources.mcp.needUrl'))
+    return
+  }
+  mcpSaving.value = true
+  try {
+    // 只传这三个字段：后端 save() 对其余字段用当前值兜底，不会动流映射与节奏
+    await api.patrolConfigSave({
+      mcp_url: url,
+      mcp_auth: mcpForm.mcp_auth,
+      ...(mcpForm.mcp_token ? { mcp_token: mcpForm.mcp_token } : {}),
+    })
+    ElMessage.success(t('logSources.mcp.saved'))
+    mcpDialog.open = false
+    streamsLoaded.value = false
+    streamOptions.value = []
+    await load()
+  } catch (e) {
+    // 拦截器已提示
+  } finally {
+    mcpSaving.value = false
+  }
+}
+
 async function save() {
   if (!drawer.row) return
   saving.value = true
@@ -502,6 +639,23 @@ onMounted(load)
   color: var(--el-text-color-secondary);
   margin: 0 0 10px;
   line-height: 1.6;
+}
+.mcp-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  background: var(--el-fill-color-light);
+  border-radius: 6px;
+  padding: 6px 12px;
+  margin-bottom: 12px;
+}
+.mcp-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--el-color-success);
+  flex: none;
 }
 .stat-row {
   display: grid;
