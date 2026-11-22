@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+### 文档：Graylog 测试环境选型（本地机器到底装不装得起）
+
+要验证 `ztna.rules` 和 MCP 读流，先得有一台能跑 Graylog 的机器。这一节把「能不能装」从经验判断变成可核对的清单，避免在办公笔记本上耗一天最后卡在 OOM。
+
+- `deploy/graylog/README.md` 新增 §9「测试环境选型」，§0 前置检查加了指路提示
+- **最低配置**（单机测试）：4 vCPU、8 GB 可自由使用内存、20 GB 空闲 SSD；空载栈实测 4.6–5.4 GB（Data Node ≈ 3 GB heap + Graylog 0.7 GB + MongoDB 0.15 GB），机械盘上段合并会把 IO 打满
+- **典型笔记本不达标的三条硬指标**：内存只剩余量、磁盘剩余、虚拟化（BootCamp 下 Hyper-V 不可用、WSL 常被组策略禁用，Docker Desktop 装不起来）；把 heap 压到 768/512 MB 能骗过启动，但查询超时会让验证结论失真
+- **三条路径**：A 内网 Linux 虚机 + compose（推荐，验证全链路）／B 本地规则模拟不装 Graylog（零资源，先把规则回归干净）／C Windows 原生硬装（官方不支持，需清 25 GB，不建议）
+- **30 秒上机自检**：`nproc` / `free -g` / `df -h` / `lsblk -d -o name,rota` / `docker compose version`，外加 `vm.max_map_count=262144`
+- 未内置 compose 文件：7.x 的 Data Node 首启要走 preflight（生成 CA、一次性密码、provisioning），heap 需按主机规格现场定，等目标虚机规格确认后再生成
+
 ### 新增：数据源页 + Graylog ztna 归一化规则（规范落地）
 
 上一版只出了规范文档，这一版把两端都接上：Graylog 侧能产出 `norm-ztna`，平台侧能看见每个源的健康度。

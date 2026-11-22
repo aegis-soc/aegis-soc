@@ -6,6 +6,8 @@
 
 ## 0. 前置检查
 
+> 手头还没有可用的 Graylog？先看 [§9 测试环境选型](#9-测试环境选型装在哪最低什么配置)——这东西对 CPU / 内存 / 磁盘的要求比一般中间件高，装错地方等于白折腾。
+
 | 项 | 要求 |
 |---|---|
 | Graylog | 7.1（`System → Nodes` 可看版本） |
@@ -123,3 +125,61 @@ streams:norm-ztna-reject
 3. **`action` 词表**：设备原值（`阻断`/`拦截`/`deny`/`drop`）必须折算成 `block/deny/drop/reset/alert/allow/log/monitor`，平台只按「已阻断 / 未阻断」二分。
 
 `ips` / `waf` 的规则文件建议在 ztna 稳定运行一周后再建——那时 §5 的映射表已经有了真实字段，不必二次返工。
+
+## 9. 测试环境选型：装在哪、最低什么配置
+
+> 一句话结论：**别在办公笔记本上装**。Graylog 7.x 单机是「JVM 应用 + 搜索引擎 + 配置库」三件套，空载就吃 4–5 GB 内存，落在机械盘上启动要十几分钟、查询频繁超时——装完也只是「能启动，不能用」，验证不出规则对错。
+
+### 9.1 最低配置（单机测试口径）
+
+| 资源 | 最低 | 说明 |
+|---|---|---|
+| CPU | 4 vCPU | 2 核能起来，但建索引和搜索时会卡到没法点 |
+| 内存 | 8 GB **可自由使用** | 空载栈实测 4.6–5.4 GB：Data Node（OpenSearch）≈ 3 GB heap + Graylog ≈ 0.7 GB + MongoDB ≈ 0.15 GB |
+| 磁盘空间 | 40 GB，**剩余 ≥ 20 GB** | 镜像 + 卷约 6 GB；索引另按「每日日志量 × 保留天数 × 1.2」算 |
+| 磁盘类型 | SSD | HDD 上段合并会把 IO 打满，搜索超时、pipeline 模拟器几十秒才出结果 |
+| 运行时 | Docker Engine 20.10+ / Compose v2 | Windows 侧需 WSL2 或 Hyper-V，且 BIOS 已开虚拟化 |
+
+判断口径很简单：**4 vCPU + 8 GB 可用内存 + 20 GB 空闲 SSD，三条同时满足才值得动手**。缺一条就别硬上，验证结论不可信。
+
+### 9.2 为什么笔记本经常不够（实测一例）
+
+一台典型办公笔记本：i5-5250U（2 核 4 线程）、8 GB 内存但系统已占 6.2 GB（可用 1.7 GB）、C 盘剩 9.9 GB、5400rpm 机械盘、Windows 跑在 BootCamp 分区。三条硬指标全不达标：
+
+- **内存**：栈要 4–5 GB，可用只有 1.7 GB → 启动即 OOM，或全程换页
+- **磁盘**：只剩 9.9 GB，镜像占 6 GB，索引滚几天就满
+- **虚拟化**：BootCamp 下 Hyper-V 不可用，WSL 又多被组策略禁用 → Docker Desktop 根本装不起来
+
+把 heap 压到极限（OpenSearch 768 MB + Graylog 512 MB）能骗过启动，但查询会超时、模拟器要等几十秒，等于用一堆假阴性/假阳性换一个「装好了」的心理安慰。
+
+### 9.3 三条可行路径
+
+| 路径 | 成本 | 能验证什么 | 适用 |
+|---|---|---|---|
+| **A. 内网 Linux 虚机 + docker compose**（推荐） | 一台 4C/8G/40G SSD | 全链路：pipeline 分流、`ua_*` 派生、reject 流、MCP 读流清单、LBA 采集 | 有虚机资源就走这条 |
+| **B. 本地规则模拟（不装 Graylog）** | 零资源 | 规则分支结果：`_schema_ok` 打标、`_schema_missing` 内容、`route_to_stream` 落到哪个流 | 规则先回归干净，等虚机就绪 |
+| **C. Windows 原生硬装**（MongoDB zip + OpenSearch zip + Graylog tarball + JDK 17） | 清出 25 GB、腾出 5 GB 内存，官方不支持 Windows | 能跑，但路径与脚本问题要自己趟 | 不建议 |
+
+A 与 B 不冲突，且是推荐组合：B 把 `ztna.rules` 用样例日志跑一遍，A 上机后一次过，省掉「改一版、等一轮、再看日志」的来回。
+
+### 9.4 上机自检（30 秒）
+
+在目标主机上依次确认，任何一条不过就先别装：
+
+```bash
+nproc                        # ≥ 4
+free -g                      # available ≥ 8
+df -h /                      # 剩余 ≥ 20G
+lsblk -d -o name,rota        # rota=0 是 SSD
+docker version && docker compose version
+```
+
+Linux 还要放开 OpenSearch 需要的内核参数，并持久化：
+
+```bash
+echo 'vm.max_map_count=262144' | sudo tee /etc/sysctl.d/99-graylog.conf
+sudo sysctl --system
+```
+
+> 本仓库暂未内置 compose 文件：Graylog 7.x 的 Data Node 首次启动要走 preflight（生成 CA、输入一次性密码、provisioning），heap 也要按主机内存现场定（一般取内存一半，上限 31 GB）。确认目标虚机的 CPU / 内存后，再按该规格生成 compose，避免给了模板却跑不起来。
+
