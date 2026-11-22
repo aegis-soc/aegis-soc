@@ -249,6 +249,18 @@ end
 
 向后兼容：旧配置没有 `source_code` 时，按 `name` 推导（`IPS`/`WAF`/`ZTNA` → `ips`/`waf`/`ztna`），`schema_version` 默认 `"1.0"`，缺字段不影响启动。
 
+**已落地**：
+
+| 件 | 位置 |
+|---|---|
+| 读：配置 + 最近一轮健康度 | `GET /api/v1/log-sources`（权限 `inspection:read`，不触发 Graylog 查询，复用巡检落库的每流统计） |
+| 写：stream_id / 契约 / 启停 | `PUT /api/v1/log-sources/{source_code}`（权限 `system:*`，写审计 `LOG_SOURCE_UPDATE`） |
+| 页面 | 菜单「数据源」（`frontend/src/views/LogSources.vue`）：四源状态、缺失率、不合规率、最近拉取，抽屉里改 stream_id 与必填字段 |
+| Graylog 侧规则 | `deploy/graylog/pipeline/ztna.rules` + `deploy/graylog/README.md`（建流、挂 stage、验证、排错） |
+
+健康度的六态：`ok`（正常）/ `degraded`（缺失率 > 0.5% 或不合规 > 1%）/ `failed` / `unconfigured` / `disabled` / `empty` / `skipped` / `unknown`。
+阈值集中在 `backend/app/services/log_sources.py`，与 §7.2 保持一致。
+
 ### 6.2 读取规则
 
 | 场景 | 做法 |
@@ -358,11 +370,11 @@ end
 
 ## 12. 分期
 
-| 阶段 | 内容 | 产出 |
-|---|---|---|
-| P0（本文档） | 规范定稿、映射表初版、四源清单 | 文档 + 词表 |
-| P1 | Graylog 侧 `norm-*` 流与 pipeline 规则落地（先 `ztna`，LBA 需要） | 可读的标准流 |
-| P2 | 平台侧注册表扩展、字段直读、缺失/漂移指标 | 数据源健康可观测 |
-| P3 | `reject` 流质量看板、去别名、严格契约模式 | 厂商耦合清零 |
+| 阶段 | 内容 | 产出 | 状态 |
+|---|---|---|---|
+| P0 | 规范定稿、映射表初版、四源清单 | 文档 + 词表 | ✅ 完成 |
+| P1 | Graylog 侧 `norm-*` 流与 pipeline 规则（先 `ztna`） | 可读的标准流 | 规则文件就绪，待现场按 `deploy/graylog/README.md` 导入 |
+| P2 | 平台侧注册表扩展、字段直读、缺失/打标指标 | 数据源健康可观测 | ✅ 完成（接口 + 页面 + 巡检内统计） |
+| P3 | `reject` 流质量看板、去别名、严格契约模式 | 厂商耦合清零 | 待做 |
 
 > 顺序理由：`ztna` 先做（LBA 与巡检都要），`ips/waf` 跟随（巡检已在用，风险最高），`nta` 最后（消费方少）。

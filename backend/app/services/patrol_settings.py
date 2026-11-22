@@ -30,11 +30,36 @@ AUTH_CHOICES = {"token", "bearer", "basic", "none", "raw"}
 MODES = {"dry-run", "assist", "auto"}
 TOKEN_MASK = "********"
 
-DEFAULT_STREAMS: list[dict[str, str]] = [
-    {"name": "IPS", "label": "IPS 入侵防御", "stream_id": "", "query": ""},
-    {"name": "WAF", "label": "WAF 应用防火墙", "stream_id": "", "query": ""},
-    {"name": "ZTNA", "label": "零信任接入", "stream_id": "", "query": ""},
+DEFAULT_STREAMS: list[dict[str, Any]] = [
+    {"name": "IPS", "label": "IPS 入侵防御", "stream_id": "", "query": "",
+     "source_code": "ips", "purpose": ["patrol"], "schema_version": "1.0",
+     "required_fields": ["ts", "src_ip", "action", "severity"], "enabled": True},
+    {"name": "WAF", "label": "WAF 应用防火墙", "stream_id": "", "query": "",
+     "source_code": "waf", "purpose": ["patrol"], "schema_version": "1.0",
+     "required_fields": ["ts", "src_ip", "action", "severity", "url"], "enabled": True},
+    {"name": "ZTNA", "label": "零信任接入", "stream_id": "", "query": "",
+     "source_code": "ztna", "purpose": ["lba", "patrol"], "schema_version": "1.0",
+     "required_fields": ["ts", "src_ip", "url", "status_code", "ua_raw", "ua_class"],
+     "enabled": True},
+    {"name": "NTA", "label": "态势感知 / 全流量", "stream_id": "", "query": "",
+     "source_code": "nta", "purpose": ["patrol"], "schema_version": "1.0",
+     "required_fields": ["ts", "src_ip"], "enabled": True},
 ]
+
+# name / 中文名 → source_code：旧配置只有 name，靠这张表推导（规范化后写回）
+SOURCE_CODE_BY_NAME = {
+    "IPS": "ips", "WAF": "waf", "ZTNA": "ztna", "NTA": "nta",
+    "零信任": "ztna", "态感": "nta", "态势感知": "nta",
+}
+SOURCE_CODES = {"ips", "waf", "ztna", "nta"}
+# 未声明 required_fields 时按源给默认值，避免页面出现空契约
+DEFAULT_REQUIRED = {
+    "ips": ["ts", "src_ip", "action", "severity"],
+    "waf": ["ts", "src_ip", "action", "severity", "url"],
+    "ztna": ["ts", "src_ip", "url", "status_code", "ua_raw", "ua_class"],
+    "nta": ["ts", "src_ip"],
+}
+DEFAULT_PURPOSE = {"ztna": ["lba", "patrol"]}
 
 
 @dataclass
@@ -48,7 +73,7 @@ class PatrolConfig:
     tool: str = "search_messages"
     stream_tool: str = "list_streams"
     args: str = ""
-    streams: list[dict[str, str]] = field(default_factory=lambda: [dict(s) for s in DEFAULT_STREAMS])
+    streams: list[dict[str, Any]] = field(default_factory=lambda: [dict(s) for s in DEFAULT_STREAMS])
     interval: int = 300
     overlap: int = 60
     max_records: int = 2000
@@ -64,22 +89,68 @@ class PatrolConfig:
         return bool(self.url.strip())
 
 
-def normalize_streams(raw: Any) -> list[dict[str, str]]:
-    """把任意来源的流配置收敛成固定形状；非法项丢弃，空列表回退默认三流。"""
+def _source_code(item: dict[str, Any]) -> str:
+    """source_code 优先取显式值，其次按 name 推导——旧配置只有 name 也能升级。"""
+    raw = str(item.get("source_code") or "").strip().lower()
+    if raw in SOURCE_CODES:
+        return raw
+    name = str(item.get("name") or "").strip()
+    mapped = SOURCE_CODE_BY_NAME.get(name.upper()) or SOURCE_CODE_BY_NAME.get(name)
+    if mapped:
+        return mapped
+    lowered = name.lower()
+    return lowered if lowered in SOURCE_CODES else lowered[:16] or "unknown"
+
+
+def _string_list(value: Any, limit: int = 16) -> list[str]:
+    if isinstance(value, str):
+        value = [part.strip() for part in value.split(",")]
+    if not isinstance(value, (list, tuple)):
+        return []
+    out: list[str] = []
+    for part in value:
+        text = str(part).strip()[:64]
+        if text and text not in out:
+            out.append(text)
+    return out[:limit]
+
+
+def normalize_streams(raw: Any) -> list[dict[str, Any]]:
+    """把任意来源的流配置收敛成固定形状；非法项丢弃，空列表回退默认。
+
+    兼容性：老配置只有 ``name/label/stream_id/query``，这里按 name 推导
+    ``source_code`` 并补齐用途与字段契约，读出来即是新结构，不需要迁移脚本。
+    """
     if isinstance(raw, str):
         try:
             raw = json.loads(raw or "[]")
         except json.JSONDecodeError:
             raw = []
-    streams: list[dict[str, str]] = []
+    streams: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for item in raw or []:
         if not isinstance(item, dict) or not item.get("name"):
             continue
+        code = _source_code(item)
+        if code in seen:            # 同一源重复配置只保留第一条，避免页面出现两行
+            continue
+        seen.add(code)
+        purpose = _string_list(item.get("purpose"))
+        if not purpose:
+            purpose = list(DEFAULT_PURPOSE.get(code, ["patrol"]))
+        required = _string_list(item.get("required_fields"))
+        if not required:
+            required = list(DEFAULT_REQUIRED.get(code, ["ts", "src_ip"]))
         streams.append({
             "name": str(item.get("name")).upper()[:16],
             "label": str(item.get("label") or item.get("name"))[:64],
             "stream_id": str(item.get("stream_id") or "").strip()[:64],
             "query": str(item.get("query") or "").strip()[:255],
+            "source_code": code,
+            "purpose": [p for p in purpose if p in {"lba", "patrol", "soar"}][:4] or ["patrol"],
+            "schema_version": str(item.get("schema_version") or "1.0").strip()[:16],
+            "required_fields": required,
+            "enabled": bool(item.get("enabled", True)),
         })
     return streams or [dict(s) for s in DEFAULT_STREAMS]
 

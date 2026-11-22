@@ -149,6 +149,8 @@ http://<平台地址>/api/v1/alerts/graylog?secret=你的GRAYLOG_WEBHOOK_SECRET
 
 👉 详见 [docs/graylog-config-guide.md](docs/graylog-config-guide.md)
 
+> 📐 **日志源与字段规范**：平台只与 Graylog 对接，四类源（ips / waf / ztna / nta）各一条归一化流，字段契约见 [docs/log-source-spec.md](docs/log-source-spec.md)；ztna 的 Graylog pipeline 规则与建流步骤见 [deploy/graylog](deploy/graylog/README.md)，可在「系统设置 → 数据源」页查看健康度。
+
 > 无 Graylog 也能完整体验：内置 `mock` 插件 + `docs/graylog-config-guide.md` 里的 `curl` 样例即可跑通「告警 → 策略 → 任务 → 下发 → 到期解封」闭环。
 > Demo 模式（一键拉起 Graylog + ES + MongoDB）规划于 v1.1，见 `docker-compose-demo.yml`。
 > 🗂️ 黑名单为什么按「流水」存、被拦截的地址在哪看：见 [docs/blacklist-history.md](docs/blacklist-history.md)。

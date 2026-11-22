@@ -149,6 +149,8 @@ http://<platform-host>/api/v1/alerts/graylog?secret=YOUR_GRAYLOG_WEBHOOK_SECRET
 
 👉 See [docs/graylog-config-guide.md](docs/graylog-config-guide.md)
 
+> 📐 **Log sources and field contract**: the platform talks only to Graylog. Four sources (ips / waf / ztna / nta), one normalized stream each — see [docs/log-source-spec.md](docs/log-source-spec.md). The ztna Graylog pipeline rules and stream setup live in [deploy/graylog](deploy/graylog/README.md); health is visible under **Settings → Data sources**.
+
 > You can try the full loop without Graylog: the built-in `mock` plugin plus the `curl` samples in `docs/graylog-config-guide.md` run the entire chain "alert → policy → task → dispatch → expiry unblock".
 > Demo mode (one-click Graylog + ES + MongoDB) is planned for v1.1, see `docker-compose-demo.yml`.
 > 🗂️ Why the blacklist is append-only and where rejected attempts show up: [docs/blacklist-history.md](docs/blacklist-history.md).

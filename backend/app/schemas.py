@@ -458,10 +458,22 @@ class PatrolDetailOut(PatrolRunOut):
 
 # ---------------- 日志巡检配置 ----------------
 class PatrolStreamConfig(BaseModel):
+    """一条日志源（Graylog 流）的配置。
+
+    前四个字段是老结构（只有流），后五个是日志源规范引入的契约字段：
+    ``source_code`` 决定平台怎么读，``required_fields`` 是缺失率统计的依据。
+    旧配置不传后五个也能保存，服务端会按 name 推导。
+    """
+
     name: str = Field(min_length=1, max_length=16)
     label: str = Field(default="", max_length=64)
     stream_id: str = Field(default="", max_length=64)
     query: str = Field(default="", max_length=255)
+    source_code: str = Field(default="", max_length=16)
+    purpose: list[str] | None = None
+    schema_version: str = Field(default="", max_length=16)
+    required_fields: list[str] | None = None
+    enabled: bool | None = None
 
 
 class PatrolConfigIn(BaseModel):
@@ -485,6 +497,22 @@ class PatrolConfigIn(BaseModel):
     timeout_seconds: int | None = Field(default=None, ge=5, le=120)
     repeat_hours: int | None = Field(default=None, ge=1, le=720)
     mode: str | None = Field(default=None, max_length=16)
+
+
+class LogSourceUpdate(BaseModel):
+    """数据源局部更新：只改传进来的字段（None 视为不改）。
+
+    这是「系统设置 → 数据源」页的入参，比整套巡检配置轻——运营只想换一个
+    stream_id 或调一条字段契约时，不必把 MCP 地址、token 一起提交。
+    """
+
+    label: str | None = Field(default=None, max_length=64)
+    stream_id: str | None = Field(default=None, max_length=64)
+    query: str | None = Field(default=None, max_length=255)
+    enabled: bool | None = None
+    schema_version: str | None = Field(default=None, max_length=16)
+    required_fields: list[str] | None = None
+    purpose: list[str] | None = None
 
 
 class PatrolProbeIn(BaseModel):

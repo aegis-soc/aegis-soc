@@ -62,6 +62,9 @@ export const api = {
   patrolConfigSave: (data) => http.put('/patrols/config', data),
   patrolMcpTest: (data) => http.post('/patrols/mcp/test', data, { timeout: 60000 }),
 
+  logSources: () => http.get('/log-sources'),
+  logSourceUpdate: (code, data) => http.put(`/log-sources/${code}`, data),
+
   chatAsk: (data) => http.post('/chat/ask', data, { timeout: 120000 }),
   chatSessions: () => http.get('/chat/sessions'),
   chatSession: (id) => http.get(`/chat/sessions/${id}`),

@@ -498,14 +498,18 @@ def _window(db: Session, now: datetime, cfg: PatrolConfig) -> tuple[datetime, da
     return start, now
 
 
-def _fetch_stream(client: McpHttpClient, stream: dict[str, str], start: datetime,
+def _fetch_stream(client: McpHttpClient, stream: dict[str, Any], start: datetime,
                   end: datetime, limit: int,
                   cfg: PatrolConfig | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     status: dict[str, Any] = {
         "name": stream["name"], "label": stream.get("label") or stream["name"],
         "stream_id": stream.get("stream_id", ""), "fetched": 0, "error": "",
-        "skipped": "",
+        "skipped": "", "source_code": stream.get("source_code") or "",
+        "schema_version": stream.get("schema_version") or "",
     }
+    if stream.get("enabled") is False:
+        status["skipped"] = "数据源已禁用"
+        return [], status
     if not stream.get("stream_id") and not stream.get("query"):
         status["skipped"] = "未配置 stream_id / query"
         return [], status
@@ -541,6 +545,26 @@ def _fetch_stream(client: McpHttpClient, stream: dict[str, str], start: datetime
     for record in records:
         record.setdefault("_stream", stream["name"])
     status["fetched"] = len(records)
+    # 字段契约健康度：巡检顺手统计，前端「数据源」页直接读，不必再单独扫一遍日志
+    required = stream.get("required_fields") or []
+    missing: dict[str, int] = {}
+    schema_ok = 0
+    ts_fallback = 0
+    for record in records:
+        for field in required:
+            value = record.get(field)
+            if value is None or value == "":
+                missing[field] = missing.get(field, 0) + 1
+        if str(record.get("_schema_ok", "")).lower() == "true":
+            schema_ok += 1
+        if str(record.get("_ts_from_ingest", "")).lower() == "true":
+            ts_fallback += 1
+    status["required_fields"] = list(required)
+    status["missing"] = missing
+    status["missing_total"] = sum(missing.values())
+    status["schema_ok"] = schema_ok
+    status["schema_bad"] = max(0, len(records) - schema_ok) if records else 0
+    status["ts_fallback"] = ts_fallback
     return records, status
 
 
@@ -691,6 +715,10 @@ def run_patrol(db: Session, *, trigger: str = "cron", created_by: str = "system"
     stream_status: list[dict[str, Any]] = []
     configured = 0
     for stream in cfg.streams:
+        if stream.get("enabled") is False:
+            items, status = _fetch_stream(client, stream, start, end, cfg.max_records, cfg)
+            stream_status.append(status)
+            continue
         if stream.get("stream_id") or stream.get("query"):
             configured += 1
         items, status = _fetch_stream(client, stream, start, end, cfg.max_records, cfg)
@@ -714,7 +742,7 @@ def run_patrol(db: Session, *, trigger: str = "cron", created_by: str = "system"
     run.blocked = 0  # P0 恒定：绝不产生封禁
     if not configured:
         run.status = "skipped"
-        run.error = "三流均未配置 stream_id / query"
+        run.error = "所有日志源均未配置 stream_id / query"
     elif len(errors) == configured:
         run.status = "failed"
         run.error = "；".join(f"{e['name']}: {e['error']}" for e in errors)[:1000]

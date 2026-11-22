@@ -1,0 +1,356 @@
+// AegisSoc · 零信任 7 层网关日志归一化规则
+// 契约：docs/log-source-spec.md §3.4（访问字段）
+// 合格流：norm-ztna；缺必填流：norm-ztna-reject
+// 使用前替换文件末尾 2 处 STREAM_ID 占位符，步骤见同目录 README.md
+//
+// 改规则前先读这四条，都是踩过的坑：
+// 1. Graylog 的 rule 不能在 then 块里嵌套 when。「优先级」只能靠 stage 顺序
+//    + !has_field(...) 实现，不要试图写 if/else。
+// 2. 不要改写 Graylog 保留字段 timestamp（它是 Graylog 的时间轴）。
+//    业务时间另存 ts，入库时间另存 ingest_ts。
+// 3. 匿名访问不是字段缺失：移除 username 的同时打 _anonymous=true，
+//    validate 时两者都缺才算丢失。这样才能把「匿名」和「解析失败」分开。
+// 4. 只用 Graylog 7.1 确定存在的函数：has_field / set_field / remove_field /
+//    rename_field / to_string / to_long / to_int / lowercase / uppercase /
+//    contains / regex / concat / route_to_stream。
+//    不要用 when_has / first / trim 这些不存在的函数。
+//
+// stage 划分（在 Graylog 里按注释分组分别添加，顺序不可打乱）：
+//   stage 0  常量与字段改名
+//   stage 1  类型转换
+//   stage 2  ua_* 派生 + 初始化校验标记
+//   stage 3  必填校验 + 打标 + 分流
+
+// ============================================================
+// stage 0：常量与字段改名（只映射，不加工）
+// ============================================================
+
+rule "ztna :: 常量"
+when true
+then
+  set_field("source_code", "ztna");
+  set_field("vendor", "sangfor");
+  set_field("product", "atrust");
+  set_field("schema_version", "1.0");
+end
+
+rule "ztna :: rename username (user_name)"
+when has_field("user_name") && !has_field("username")
+then
+  rename_field("user_name", "username");
+end
+
+rule "ztna :: rename username (account)"
+when has_field("account") && !has_field("username")
+then
+  rename_field("account", "username");
+end
+
+rule "ztna :: rename url"
+when has_field("request_uri") && !has_field("url")
+then
+  rename_field("request_uri", "url");
+end
+
+rule "ztna :: rename ua_raw"
+when has_field("user_agent") && !has_field("ua_raw")
+then
+  rename_field("user_agent", "ua_raw");
+end
+
+rule "ztna :: rename src_ip"
+when has_field("client_ip") && !has_field("src_ip")
+then
+  rename_field("client_ip", "src_ip");
+end
+
+rule "ztna :: rename app_id"
+when has_field("app") && !has_field("app_id")
+then
+  rename_field("app", "app_id");
+end
+
+rule "ztna :: split url_query"
+when has_field("url") && !has_field("url_query")
+  && contains(to_string($message.url), "?")
+then
+  set_field("url_query", regex("\\?(.*)$", to_string($message.url)));
+  set_field("url", regex("^([^?]*)", to_string($message.url)));
+end
+
+// ============================================================
+// stage 1：类型转换
+// ============================================================
+
+// 入库时间：Graylog 接收时间 → epoch millis
+rule "ztna :: ingest_ts"
+when has_field("timestamp")
+then
+  set_field("ingest_ts", to_long($message.timestamp));
+end
+
+// 业务时间：设备给的 event_time 优先
+rule "ztna :: ts from event_time"
+when has_field("event_time") && !has_field("ts")
+then
+  set_field("ts", to_long(to_string($message.event_time)));
+end
+
+// 设备没给事件时间：用入库时间兜底，并留痕，便于质量看板区分
+rule "ztna :: ts fallback"
+when !has_field("ts") && has_field("ingest_ts")
+then
+  set_field("ts", to_long(to_string($message.ingest_ts)));
+  set_field("_ts_from_ingest", "true");
+end
+
+rule "ztna :: cast status_code"
+when has_field("status_code")
+then
+  set_field("status_code", to_int(to_string($message.status_code)));
+end
+
+rule "ztna :: cast req_bytes"
+when has_field("request_length") && !has_field("req_bytes")
+then
+  set_field("req_bytes", to_long(to_string($message.request_length)));
+end
+
+rule "ztna :: cast resp_bytes"
+when has_field("response_length") && !has_field("resp_bytes")
+then
+  set_field("resp_bytes", to_long(to_string($message.response_length)));
+end
+
+rule "ztna :: method 大写"
+when has_field("method")
+then
+  set_field("method", uppercase(to_string($message.method)));
+end
+
+// ============================================================
+// stage 2：ua_class / ua_browser / ua_os（设备指纹依据）+ 初始化校验标记
+// 优先级：feishu > mobile > pc，靠 stage 顺序 + !has_field 控制
+// ============================================================
+
+// 三个布尔字段可能是 true/false、1/0、yes/no，用字符串比较避免 to_bool 抛异常
+rule "ztna :: ua_class feishu"
+when has_field("ua_feishu")
+  && (to_string($message.ua_feishu) == "true" || to_string($message.ua_feishu) == "1")
+then
+  set_field("ua_class", "feishu");
+end
+
+rule "ztna :: ua_class mobile"
+when has_field("ua_mobile") && !has_field("ua_class")
+  && (to_string($message.ua_mobile) == "true" || to_string($message.ua_mobile) == "1")
+then
+  set_field("ua_class", "mobile");
+end
+
+rule "ztna :: ua_class pc"
+when has_field("ua_pc") && !has_field("ua_class")
+  && (to_string($message.ua_pc) == "true" || to_string($message.ua_pc) == "1")
+then
+  set_field("ua_class", "pc");
+end
+
+// 设备没给布尔字段时，从 UA 文本兜底（弱信号，只为避免 ua_class 为空）
+rule "ztna :: ua_class from ua_raw mobile"
+when has_field("ua_raw") && !has_field("ua_class")
+  && (contains(lowercase(to_string($message.ua_raw)), "iphone")
+   || contains(lowercase(to_string($message.ua_raw)), "android"))
+then
+  set_field("ua_class", "mobile");
+end
+
+rule "ztna :: ua_class from ua_raw pc"
+when has_field("ua_raw") && !has_field("ua_class")
+then
+  set_field("ua_class", "pc");
+end
+
+rule "ztna :: ua_class fallback"
+when !has_field("ua_class")
+then
+  set_field("ua_class", "other");
+end
+
+rule "ztna :: ua_browser feishu"
+when has_field("ua_raw")
+  && (contains(lowercase(to_string($message.ua_raw)), "feishu")
+   || contains(lowercase(to_string($message.ua_raw)), "lark"))
+then
+  set_field("ua_browser", "feishu");
+end
+
+rule "ztna :: ua_browser edge"
+when has_field("ua_raw") && !has_field("ua_browser")
+  && contains(lowercase(to_string($message.ua_raw)), "edg/")
+then
+  set_field("ua_browser", "edge");
+end
+
+rule "ztna :: ua_browser chrome"
+when has_field("ua_raw") && !has_field("ua_browser")
+  && contains(lowercase(to_string($message.ua_raw)), "chrome/")
+then
+  set_field("ua_browser", "chrome");
+end
+
+rule "ztna :: ua_browser firefox"
+when has_field("ua_raw") && !has_field("ua_browser")
+  && contains(lowercase(to_string($message.ua_raw)), "firefox/")
+then
+  set_field("ua_browser", "firefox");
+end
+
+rule "ztna :: ua_browser safari"
+when has_field("ua_raw") && !has_field("ua_browser")
+  && contains(lowercase(to_string($message.ua_raw)), "safari/")
+then
+  set_field("ua_browser", "safari");
+end
+
+rule "ztna :: ua_browser fallback"
+when !has_field("ua_browser")
+then
+  set_field("ua_browser", "other");
+end
+
+// 主版本号只取整数部分：设备指纹按主版本聚合
+rule "ztna :: ua_browser_ver edge"
+when has_field("ua_raw") && to_string($message.ua_browser) == "edge"
+then
+  set_field("ua_browser_ver", regex("edg/(\\d+)", to_string($message.ua_raw)));
+end
+
+rule "ztna :: ua_browser_ver chrome"
+when has_field("ua_raw") && to_string($message.ua_browser) == "chrome"
+then
+  set_field("ua_browser_ver", regex("chrome/(\\d+)", to_string($message.ua_raw)));
+end
+
+rule "ztna :: ua_browser_ver firefox"
+when has_field("ua_raw") && to_string($message.ua_browser) == "firefox"
+then
+  set_field("ua_browser_ver", regex("firefox/(\\d+)", to_string($message.ua_raw)));
+end
+
+rule "ztna :: ua_browser_ver safari"
+when has_field("ua_raw") && to_string($message.ua_browser) == "safari"
+then
+  set_field("ua_browser_ver", regex("version/(\\d+)", to_string($message.ua_raw)));
+end
+
+rule "ztna :: ua_os windows"
+when has_field("ua_raw")
+  && contains(lowercase(to_string($message.ua_raw)), "windows")
+then
+  set_field("ua_os", "windows");
+end
+
+rule "ztna :: ua_os macos"
+when has_field("ua_raw") && !has_field("ua_os")
+  && contains(lowercase(to_string($message.ua_raw)), "macintosh")
+then
+  set_field("ua_os", "macos");
+end
+
+rule "ztna :: ua_os ios"
+when has_field("ua_raw") && !has_field("ua_os")
+  && (contains(lowercase(to_string($message.ua_raw)), "iphone")
+   || contains(lowercase(to_string($message.ua_raw)), "ipad"))
+then
+  set_field("ua_os", "ios");
+end
+
+rule "ztna :: ua_os android"
+when has_field("ua_raw") && !has_field("ua_os")
+  && contains(lowercase(to_string($message.ua_raw)), "android")
+then
+  set_field("ua_os", "android");
+end
+
+// 校验标记必须在 stage 3 之前初始化，stage 3 的各条规则只做追加。
+// 放在 stage 2 末尾，避免依赖同一 stage 内的规则顺序。
+rule "ztna :: init schema flags"
+when true
+then
+  set_field("_schema_ok", "true");
+  set_field("_schema_missing", "");
+end
+
+// ============================================================
+// stage 3：必填校验 + 打标 + 分流
+// 缺字段不补齐——补齐会让「匿名/缺失」永远分不开
+// ============================================================
+
+// 匿名归一：设备常把匿名写成 anonymous / - / 空串，统一成「无 username + 标记」
+rule "ztna :: 匿名归一"
+when has_field("username")
+  && (to_string($message.username) == "anonymous"
+   || to_string($message.username) == "-"
+   || to_string($message.username) == "")
+then
+  remove_field("username");
+  set_field("_anonymous", "true");
+end
+
+rule "ztna :: missing src_ip"
+when !has_field("src_ip")
+then
+  set_field("_schema_ok", "false");
+  set_field("_schema_missing", concat(to_string($message._schema_missing), "src_ip,"));
+end
+
+// 多值 IP（1.1.1.1,2.2.2.2）不合契约：不猜哪个是对的，直接判不合规
+rule "ztna :: invalid src_ip 多值"
+when has_field("src_ip") && contains(to_string($message.src_ip), ",")
+then
+  set_field("_schema_ok", "false");
+  set_field("_schema_missing", concat(to_string($message._schema_missing), "src_ip_multi,"));
+end
+
+rule "ztna :: missing url"
+when !has_field("url")
+then
+  set_field("_schema_ok", "false");
+  set_field("_schema_missing", concat(to_string($message._schema_missing), "url,"));
+end
+
+rule "ztna :: missing ua_raw"
+when !has_field("ua_raw")
+then
+  set_field("_schema_ok", "false");
+  set_field("_schema_missing", concat(to_string($message._schema_missing), "ua_raw,"));
+end
+
+// username 的校验：既没有账号、也没有匿名标记，才算字段丢失
+rule "ztna :: missing username"
+when !has_field("username") && !has_field("_anonymous")
+then
+  set_field("_schema_ok", "false");
+  set_field("_schema_missing", concat(to_string($message._schema_missing), "username,"));
+end
+
+rule "ztna :: missing status_code"
+when !has_field("status_code")
+then
+  set_field("_schema_ok", "false");
+  set_field("_schema_missing", concat(to_string($message._schema_missing), "status_code,"));
+end
+
+// 分流：合格 → norm-ztna；不合格 → norm-ztna-reject
+// 不合格的也保留，供质量看板统计与修规则，不进平台消费
+rule "ztna :: route norm"
+when to_string($message._schema_ok) == "true"
+then
+  route_to_stream(id: "NORM_ZTNA_STREAM_ID");
+end
+
+rule "ztna :: route reject"
+when to_string($message._schema_ok) == "false"
+then
+  route_to_stream(id: "NORM_ZTNA_REJECT_STREAM_ID");
+end

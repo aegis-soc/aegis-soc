@@ -116,6 +116,7 @@ const menus = [
       { path: '/audit', titleKey: 'menu.auditOps', icon: 'Document' },
     ],
   },
+  { path: '/log-sources', titleKey: 'menu.logSources', icon: 'Connection' },
   { path: '/system', titleKey: 'menu.system', icon: 'Tools' },
 ]
 const activeMenu = computed(() => route.path)

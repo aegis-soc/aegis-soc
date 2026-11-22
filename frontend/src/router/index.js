@@ -24,6 +24,7 @@ const routes = [
       { path: 'policies', name: 'policies', component: () => import('../views/Policies.vue'), meta: { titleKey: 'menu.policies', icon: 'Setting' } },
       { path: 'tasks', name: 'tasks', component: () => import('../views/Tasks.vue'), meta: { titleKey: 'menu.tasks', icon: 'List' } },
       { path: 'audit', name: 'audit', component: () => import('../views/Audit.vue'), meta: { titleKey: 'menu.auditOps', icon: 'Document' } },
+      { path: 'log-sources', name: 'logSources', component: () => import('../views/LogSources.vue'), meta: { titleKey: 'menu.logSources', icon: 'Connection' } },
       { path: 'system', name: 'system', component: () => import('../views/System.vue'), meta: { titleKey: 'menu.system', icon: 'Tools' } },
     ],
   },

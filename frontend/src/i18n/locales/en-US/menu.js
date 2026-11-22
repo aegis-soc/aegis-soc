@@ -17,6 +17,7 @@ export default {
   tasks: 'Task log',
   auditOps: 'Operation audit',
   system: 'Settings',
+  logSources: 'Data sources',
   lba: 'Behavior analysis',
   loginCenter: 'Login behavior',
 }

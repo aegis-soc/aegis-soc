@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+### 新增：数据源页 + Graylog ztna 归一化规则（规范落地）
+
+上一版只出了规范文档，这一版把两端都接上：Graylog 侧能产出 `norm-ztna`，平台侧能看见每个源的健康度。
+
+- **Graylog 侧**：`deploy/graylog/pipeline/ztna.rules`（4 个 stage：常量改名 → 类型转换 → `ua_*` 派生 → 校验分流）+ `deploy/graylog/README.md`（建 raw/norm/reject 三流、挂 stage、替换 stream id、模拟器验证、6 条排错对照）
+  - `ts` 与 Graylog 的 `timestamp` 分开：不动保留字段，业务时间另存，入库时间存 `ingest_ts`
+  - 匿名访问走「移除 `username` + `_anonymous=true`」，不补空串——否则「匿名」和「解析失败」永久混在一起
+  - 不合格消息进 `norm-<source>-reject` 而不是丢弃，缺失项写进 `_schema_missing`
+  - 只用 7.1 确定存在的函数（`has_field`/`to_long`/`to_int`/`contains`/`regex`/`route_to_stream` 等），不依赖 `when_has`、`first`、`trim`
+- **后端**：`GET /api/v1/log-sources`（四源配置 + 最近一轮健康度，不触发 Graylog 查询）、`PUT /api/v1/log-sources/{source_code}`（改 stream_id / 必填字段 / 启停，写审计）
+  - 健康度复用巡检落库统计：`_fetch_stream` 新增按 `required_fields` 的缺失计数、`_schema_ok` 与 `_ts_from_ingest` 计数
+  - 六态判定集中在 `services/log_sources.py`：`ok` / `degraded`（缺失率 > 0.5% 或不合规 > 1%）/ `failed` / `unconfigured` / `disabled` / `empty` / `skipped` / `unknown`
+  - 仍不新建表：日志源就是巡检配置的 `streams`，只扩字段（`source_code` / `purpose` / `schema_version` / `required_fields` / `enabled`），旧配置按 `name` 推导，无需迁移
+  - 老库只有三条流时，NTA 以占位行出现；首次编辑会按默认值补一条再落库
+- **前端**：菜单「数据源」——4 张汇总卡 + 源列表（流 ID、契约版本、用途、必填字段、拉取量、缺失率、不合规率、状态、最近拉取），抽屉里改 stream_id / 必填字段 / 启停，附「校验流 ID」走 `list_streams` 反查；i18n 双语
+
+验证：`vite build` 通过（LogSources chunk 11.8 kB）；语言包 20 文件 **868 key 双语对齐、无空值、占位符无错配**；接口实测四源返回、NTA 可启用、PUT 落库与审计正常；测试写入的假 stream_id 已清理（库备份 `aegis_dev.db.bak-20261122-logsource`）。
+
 ### 新增：日志源、规则与字段规范（`docs/log-source-spec.md`）
 
 平台只与 Graylog 对接、不与设备厂商对接，所以「解耦点」必须落在字段名上——此前这件事一直由平台代码在补：`patrol.py` 的 `FIELD_ALIASES` 有 7 组 40+ 别名（源 IP 试 10 种写法）、`alert_parser.py` 有 14 个来源候选字段和含厂商中文名的正则。接一家新设备就要加别名，等于没解耦。
