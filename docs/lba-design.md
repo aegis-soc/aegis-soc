@@ -1,8 +1,10 @@
 # LBA：零信任 7 层网关行为分析系统设计
 
-> LBA = L7 Behavior Analysis。数据源：Graylog 上的零信任 7 层网关日志（username / src_ip / url / user_agent / method / status_code / app_id / gateway_node 等）。
+> LBA = L7 Behavior Analysis。数据源：Graylog 上的零信任 7 层网关日志（username / src_ip / url / ua_raw / method / status_code / app_id / gateway_node 等）。
 > 上层能力：IP / 账号 / UA / 应用画像、风险策略引擎、风险事件、告警、日志溯源。
 > **本文结论先行：LBA 不另起炉灶，作为 AegisSoc 的一个域（`lba`）集成，只新增一个 `lba-collector` 采集容器。**
+>
+> 字段与流的规范以 [`docs/log-source-spec.md`](./log-source-spec.md) 为准：LBA 只读 `norm-ztna` 流，按该文档 §3.4 的访问字段契约消费，不在采集器里做「多候选字段名猜测」。
 
 ---
 
@@ -86,7 +88,8 @@
 | 项 | 做法 |
 |---|---|
 | MCP 地址 / Token | **复用现有 MCP 配置**（`system_setting` 里那套），collector 启动时从后端拉取，MCP 配置页改了能感知（轮询或改配置时后端写一个版本号，collector 比对版本热更新） |
-| Stream | 复用现有 ZTNA 流映射；字段清单以 `list_fields` 实测为准，配置文件里做映射表 |
+| Stream | 读 `norm-ztna`（由 Graylog pipeline 归一化后的流），stream_id 从日志源注册表取；原始 `raw-*` 流不读 |
+| 字段契约 | 按 `log-source-spec.md` §3.4 直读标准字段；设备差异由 Graylog 侧消化，collector 不做别名兜底 |
 | 投递 | Redis Stream `lba:stream:event`，MAXLEN 上限（如 100 万条）防内存失控 |
 | 部署 | 新容器 `aegis-soc-lba-collector`，compose 里独立 service，4vCPU/8G |
 | 未来换 Kafka | 只改 collector 的 sink，上游引擎不动 |
@@ -96,25 +99,32 @@
 ```json
 {
   "event_id": "uuid",
-  "source": "graylog_zero_trust",
+  "source_code": "ztna",
+  "schema_version": "1.0",
   "graylog_msg_id": "_id 原值",
-  "timestamp": 1763891234000,
-  "username": "zhangsan | null（匿名保留空值，可做策略）",
+  "ts": 1763891234000,
+  "ingest_ts": 1763891239000,
+  "username": "zhangsan | null（匿名访问保留 null，与字段丢失区分）",
   "src_ip": "10.1.2.3",
-  "user_agent": "Mozilla/xxx | null",
   "url": "/internal/api/user",
   "method": "GET",
   "status_code": 200,
-  "request_length": 120,
-  "response_length": 1450,
+  "ua_raw": "Mozilla/xxx | null",
+  "ua_class": "pc | mobile | tablet | feishu | other",
+  "ua_browser": "chrome",
+  "ua_browser_ver": "131",
+  "ua_os": "windows",
   "app_id": "app-finance",
   "gateway_node": "zt-gw-01",
+  "req_bytes": 120,
+  "resp_bytes": 1450,
   "collect_task": "1min",
-  "ext_fields": {}
+  "vendor": "sangfor",
+  "product": "atrust"
 }
 ```
 
-规则：字段缺失置 `null` 不丢整批（计数 `field_missing_total`）；`status_code` 转数字；时间戳统一毫秒。
+规则：字段名与类型严格遵循 `log-source-spec.md` §3（`ts` 而非 `timestamp`、`ua_raw` 而非 `user_agent`）；字段缺失置 `null` 不丢整批（计数 `field_missing_total`）；`username: null` 是**匿名访问**这一有效信号，不得补默认值。设备指纹仍按 `sha1(username + ua_class + ua_browser + ua_browser_ver)` 生成。
 
 ---
 

@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+### 新增：日志源、规则与字段规范（`docs/log-source-spec.md`）
+
+平台只与 Graylog 对接、不与设备厂商对接，所以「解耦点」必须落在字段名上——此前这件事一直由平台代码在补：`patrol.py` 的 `FIELD_ALIASES` 有 7 组 40+ 别名（源 IP 试 10 种写法）、`alert_parser.py` 有 14 个来源候选字段和含厂商中文名的正则。接一家新设备就要加别名，等于没解耦。
+
+- **三层职责**：设备产出 → Graylog 归一化（厂商差异只在这层消化）→ 平台只读消费（不解析原始日志、不猜字段名）
+- **四类日志源**：`ztna`（LBA 唯一数据源 + 巡检爆破检测）、`ips`、`waf`、`nta`，逐源声明用途与消费方
+- **字段规范**：R1–R8 八条硬规则（`src_ip` 唯一写法、`ts` 为 UTC 毫秒、缺失用 `null`、禁逗号拼接多值等）+ 信封/攻击/访问三组字段表 + 四张受控词表
+- **Graylog 侧**：`raw-*` 保真流 + `norm-*` 平台读取流 + `norm-*-reject` 缺字段流三层设计；pipeline 三阶段（rename → cast → validate）打标 `_schema_ok` / `_schema_missing`
+- **平台侧**：不新建第二套配置，扩展现有 `patrol_setting.streams`（已注明"避免两处维护"），加 `source_code` / `purpose` / `schema_version` / `required_fields`，旧配置按 `name` 推导向后兼容
+- **质量**：7 项准入验收 + 6 个运行指标（缺失率、schema 漂移、对账缺口、入库延迟、reject 占比）
+- **去别名路径**：别名打点计数 → 直读优先 → 连续 7 天零命中即删 → 严格契约模式，不一刀切
+- **变更管理**：`schema_version` 语义化，改名/改类型走双写 7 天灰度；禁止平台代码出现厂商名分支
+
+同步更新 `lba-design.md`：数据源改为只读 `norm-ztna`，标准化事件字段对齐本规范（`timestamp` → `ts`、`user_agent` → `ua_raw` + `ua_class`/`ua_browser`/`ua_browser_ver`）。
+
 ### 新增：前台界面中英文切换（P1 骨架 + P2 全页面迁移）
 
 动因：设备插件（启明 IPS、Palo Alto、阿里云 WAF）与 Graylog 生态的同行多数读英文，演示与开源分发时中文界面会卡住第一眼；但运营同学的日常读写仍是中文。所以做的是**界面文案双语**，不是把系统改成英文。

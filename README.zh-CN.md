@@ -172,7 +172,7 @@ aegis-soc/
 ├── frontend/             # Vue3 + Element Plus + Vite
 ├── deploy/               # nginx.conf / my.cnf
 ├── scripts/              # install.sh（一键部署）/ smoke_test.py（部署后冒烟验收，仅标准库）
-├── docs/                 # install / deploy-cloud / verify / graylog / plugin-dev / api / security / architecture / blacklist-history / geoip / ai-inspection / graylog-patrol / chat-nlq / i18n
+├── docs/                 # install / deploy-cloud / verify / graylog / plugin-dev / api / security / architecture / blacklist-history / geoip / ai-inspection / graylog-patrol / chat-nlq / i18n / lba-design / lba-api / log-source-spec
 ├── .github/workflows/    # ci.yml（编译+测试+构建+编排校验）、release.yml（tag 触发多架构镜像发布）
 ├── docker-compose.yml
 ├── .env.example
