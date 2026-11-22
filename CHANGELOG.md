@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+### 新增：Graylog MCP 模拟服务（`deploy/graylog/mock/`）
+
+没有真 Graylog 时也要能把平台侧链路跑通。把此前只在临时目录里的验证脚本收进仓库，写成可复现的工具，而不是「上次那个脚本在哪」。
+
+- `mock_graylog_mcp.py`：纯标准库实现 MCP 传输最小集——`initialize` / `tools/list` / `tools/call`，无第三方依赖，Windows / Linux / macOS 直接跑
+- **四个工具**：`list_streams`（9 条：`raw/norm × ztna/ips/waf` + `norm-ztna-reject` + 系统事件，id 硬编码重启不变）、`list_fields`（17 个规范字段）、`search_messages` / `aggregate_messages`
+- `--messages N` 生成符合 `log-source-spec` 的合成消息：固定种子可复现，约 3% 故意不合规（`_schema_ok=false`），匿名访问按规范**移除 `username`** 而非填空串——顺带验证平台有没有算错
+- 命令行 `--host` / `--port`（默认只听 `127.0.0.1:18080`）；`GET /mcp` 返回一行运行状态，便于确认进程活着
+- `mock/README.md` 划清边界：**能验** MCP 握手与返回包解析（`structuredContent` / text 内嵌 JSON / `{"streams":[...]}` 三种包法）、流下拉、校验流 ID、拉取量与缺失率；**不能验** pipeline 分流（必须在真 Graylog Simulator 里看）和鉴权（任何 token 都放行）
+- 与 §9.3 路径 B 打通：仓库里终于有「不装 Graylog 也能验证」的现成手段，不必为了一条链路去腾 40 GB 磁盘
+
+验证：换端口 18081 起进程，四个工具逐项调通——`initialize` 回 `mock-graylog-mcp 7.1.0`、`tools/list` 回 4 个工具、`list_streams` 回 9 条、`search_messages` 回 3 条且匿名消息确实没有 `username` 字段、`aggregate_messages` 回 5、`GET /mcp` 回状态文本；测试进程已回收。
+
 ### 文档：Graylog 测试环境选型（本地机器到底装不装得起）
 
 要验证 `ztna.rules` 和 MCP 读流，先得有一台能跑 Graylog 的机器。这一节把「能不能装」从经验判断变成可核对的清单，避免在办公笔记本上耗一天最后卡在 OOM。

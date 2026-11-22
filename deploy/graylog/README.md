@@ -162,6 +162,9 @@ streams:norm-ztna-reject
 
 A 与 B 不冲突，且是推荐组合：B 把 `ztna.rules` 用样例日志跑一遍，A 上机后一次过，省掉「改一版、等一轮、再看日志」的来回。
 
+路径 B 已有现成工具：[`mock/mock_graylog_mcp.py`](./mock/mock_graylog_mcp.py) 是零依赖的 MCP 模拟服务（9 条流 + 17 个规范字段 + 可选的合成消息），起一条命令就能让数据源页的流下拉、校验、健康度统计全部有数据。**但它不执行 pipeline**——`_schema_ok` 是人为置的，规则对错仍须回真 Graylog 验。
+
+
 ### 9.4 上机自检（30 秒）
 
 在目标主机上依次确认，任何一条不过就先别装：
