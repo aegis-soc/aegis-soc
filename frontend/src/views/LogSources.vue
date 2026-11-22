@@ -5,7 +5,10 @@
         <h2 class="page-title">{{ t('logSources.title') }}</h2>
         <p class="page-desc">{{ t('logSources.desc') }}</p>
       </div>
-      <div>
+      <div class="head-actions">
+        <el-button :icon="List" @click="openStreams" :loading="loadingStreams">
+          {{ t('logSources.stream.fromGraylog') }}
+        </el-button>
         <el-button :icon="Refresh" @click="load" :loading="loading">{{ t('common.action.refresh') }}</el-button>
       </div>
     </div>
@@ -156,8 +159,34 @@
         </el-form-item>
 
         <el-form-item :label="t('logSources.form.streamId')">
-          <el-input v-model="form.stream_id" maxlength="64" class="mono" placeholder="65f3a2..." />
+          <el-select
+            v-model="form.stream_id"
+            filterable allow-create default-first-option clearable
+            style="width: 100%"
+            :placeholder="t('logSources.form.streamPlaceholder')"
+            :loading="loadingStreams"
+            :no-data-text="streamHint || t('logSources.stream.empty')"
+            @visible-change="onStreamDropdown"
+            @change="onStreamPick"
+          >
+            <el-option v-for="s in streamOptions" :key="s.id" :label="s.title" :value="s.id">
+              <div class="opt-row">
+                <span class="opt-title">{{ s.title }}</span>
+                <el-tag
+                  v-if="s.suggested && s.suggested === suggestedRole"
+                  size="small" type="success" effect="plain"
+                >{{ t('logSources.stream.suggested') }}</el-tag>
+                <span class="opt-id mono">{{ s.id }}</span>
+              </div>
+            </el-option>
+          </el-select>
           <div class="form-hint">{{ t('logSources.form.streamIdHint') }}</div>
+          <div class="form-hint stream-hint">
+            <span>{{ streamHint }}</span>
+            <a v-if="mcpReady" class="link" @click.prevent="loadStreams(true)">
+              {{ loadingStreams ? t('logSources.stream.loading') : t('logSources.stream.refresh') }}
+            </a>
+          </div>
         </el-form-item>
 
         <el-form-item :label="t('logSources.form.query')">
@@ -207,6 +236,42 @@
         </div>
       </template>
     </el-drawer>
+
+    <el-dialog v-model="streamDialog.open" :title="t('logSources.stream.fromGraylog')" width="720px">
+      <p class="dialog-desc">{{ t('logSources.stream.dialogHint') }}</p>
+      <el-table :data="streamOptions" size="small" max-height="420" :empty-text="streamHint">
+        <el-table-column :label="t('logSources.stream.col.title')" min-width="180" prop="title" />
+        <el-table-column :label="t('logSources.stream.col.id')" min-width="220">
+          <template #default="{ row }">
+            <span class="mono" style="font-size: 12px">{{ row.id }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column :label="t('logSources.stream.col.suggested')" width="110">
+          <template #default="{ row }">
+            <el-tag v-if="row.suggested" size="small" effect="plain">{{ row.suggested }}</el-tag>
+            <span v-else class="text-muted">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column :label="t('logSources.stream.col.desc')" min-width="180">
+          <template #default="{ row }">
+            <span class="text-muted" style="font-size: 12px">{{ row.description || '-' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column width="72" align="right">
+          <template #default="{ row }">
+            <el-button link size="small" @click="copyId(row.id)">{{ t('logSources.stream.copy') }}</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button size="small" :loading="loadingStreams" @click="loadStreams(true)">
+          {{ loadingStreams ? t('logSources.stream.loading') : t('logSources.stream.refresh') }}
+        </el-button>
+        <el-button size="small" type="primary" @click="streamDialog.open = false">
+          {{ t('common.action.close') }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -214,7 +279,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
-import { Refresh } from '@element-plus/icons-vue'
+import { Refresh, List } from '@element-plus/icons-vue'
 import api from '../api'
 import { store } from '../store'
 
@@ -229,6 +294,19 @@ const form = reactive({
   required_fields: [], purpose: [], enabled: true,
 })
 const data = reactive({ mcp: {}, items: [], summary: {}, spec: {} })
+
+// Graylog 流清单：进入下拉时懒加载一次，之后复用；「刷新清单」可强制重取。
+// 读的是 MCP 的 list_streams（服务端 /patrols/mcp/status 已封装），
+// 拿不到就退回手填，不阻塞编辑。
+const streamOptions = ref([])
+const loadingStreams = ref(false)
+const streamsLoaded = ref(false)
+const streamHint = ref('')
+const mcpReady = ref(false)
+const streamDialog = reactive({ open: false })
+
+const ROLE_BY_CODE = { ips: 'IPS', waf: 'WAF', ztna: 'ZTNA' }
+const suggestedRole = computed(() => ROLE_BY_CODE[drawer.row?.source_code] || '')
 
 const isAdmin = computed(() => store.role === 'admin')
 const summary = computed(() => data.summary || {})
@@ -281,6 +359,75 @@ function openEdit(row) {
   form.purpose = [...(row.purpose || [])]
   form.enabled = row.enabled !== false
   drawer.open = true
+  sortStreams()
+}
+
+// 与当前源名匹配的流排最前：Graylog 里几十条流，翻起来太慢
+function sortStreams() {
+  streamOptions.value = [...streamOptions.value].sort((a, b) => {
+    const sa = a.suggested && a.suggested === suggestedRole.value ? 1 : 0
+    const sb = b.suggested && b.suggested === suggestedRole.value ? 1 : 0
+    return sb - sa
+  })
+}
+
+async function loadStreams(force = false) {
+  if (loadingStreams.value) return
+  if (streamsLoaded.value && !force) return
+  loadingStreams.value = true
+  try {
+    const info = await api.patrolMcpStatus()
+    if (!info?.configured) {
+      mcpReady.value = false
+      streamOptions.value = []
+      streamHint.value = t('logSources.stream.noMcp')
+      return
+    }
+    mcpReady.value = true
+    const list = Array.isArray(info.streams) ? info.streams : []
+    streamOptions.value = list
+    sortStreams()
+    streamsLoaded.value = true
+    streamHint.value = list.length
+      ? t('logSources.stream.count', { n: list.length })
+      : t('logSources.stream.empty')
+  } catch (e) {
+    // 拦截器已提示；保留手填入口
+    streamHint.value = t('logSources.stream.loadFailed')
+  } finally {
+    loadingStreams.value = false
+  }
+}
+
+function onStreamDropdown(visible) {
+  if (visible) loadStreams()
+}
+
+function openStreams() {
+  streamDialog.open = true
+  loadStreams(true)
+}
+
+async function copyId(id) {
+  try {
+    await navigator.clipboard.writeText(id)
+    ElMessage.success(t('logSources.stream.copied'))
+  } catch (e) {
+    // 非安全上下文（http、内嵌 webview）没有 clipboard API，退回让用户手选
+    ElMessage.warning(id)
+  }
+}
+
+function onStreamPick(id) {
+  const hit = streamOptions.value.find((s) => s.id === id)
+  if (!hit) return
+  if (!form.label.trim()) form.label = hit.title
+  // 名字关键词与当前源不符时提醒一句：防止把 ips 的流填进 ztna
+  if (hit.suggested && hit.suggested !== suggestedRole.value) {
+    ElMessage.warning(t('logSources.stream.mismatch', {
+      title: hit.title, source: drawer.row?.name || '',
+    }))
+  }
 }
 
 async function save() {
@@ -346,6 +493,16 @@ onMounted(load)
 </script>
 
 <style scoped>
+.head-actions {
+  display: flex;
+  gap: 8px;
+}
+.dialog-desc {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin: 0 0 10px;
+  line-height: 1.6;
+}
 .stat-row {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -391,6 +548,31 @@ onMounted(load)
   color: var(--el-text-color-secondary);
   line-height: 1.6;
   margin-top: 4px;
+}
+.stream-hint {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.stream-hint .link {
+  color: var(--el-color-primary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.opt-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.opt-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.opt-id {
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
 }
 .text-danger {
   color: var(--el-color-danger);

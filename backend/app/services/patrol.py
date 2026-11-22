@@ -588,6 +588,42 @@ STREAM_HINTS: dict[str, tuple[str, ...]] = {
 }
 
 
+def _find_stream_list(payload: Any, _depth: int = 0) -> list[dict[str, Any]]:
+    """在任意嵌套结构里找出「流清单」。
+
+    ``extract_records`` 是按消息语义写的（认 messages/data/records…），不认
+    ``streams`` 这个键，所以 ``{"data": {"streams": [...]}}`` 这类包法会漏。
+    这里改成结构无关的找法：递归找「元素带 id/stream_id 的 dict 列表」，
+    Graylog 无论怎么包都能捞出来。
+    """
+    if payload is None or _depth > 4:
+        return []
+    if isinstance(payload, str):
+        try:
+            return _find_stream_list(json.loads(payload), _depth + 1)
+        except json.JSONDecodeError:
+            return []
+    if isinstance(payload, list):
+        hits = [x for x in payload if isinstance(x, dict) and (x.get("id") or x.get("stream_id"))]
+        if hits:
+            return hits
+        for item in payload:
+            found = _find_stream_list(item, _depth + 1)
+            if found:
+                return found
+        return []
+    if isinstance(payload, dict):
+        # 先看已知包法，再看自身是不是单个流对象
+        for key in ("streams", "data", "result", "items", "records"):
+            if key in payload:
+                found = _find_stream_list(payload[key], _depth + 1)
+                if found:
+                    return found
+        if payload.get("id") or payload.get("stream_id"):
+            return [payload]
+    return []
+
+
 def discover_streams(client: McpHttpClient | None = None,
                      cfg: PatrolConfig | None = None, db=None) -> list[dict[str, Any]]:
     """调 ``list_streams`` 拿 Graylog 的流清单，用于把真实的 stream id 填进配置。"""
@@ -598,7 +634,10 @@ def discover_streams(client: McpHttpClient | None = None,
     except McpError as exc:
         logger.warning("读取 Graylog 流清单失败：%s", exc)
         return []
-    items = extract_records(payload)
+    items = _find_stream_list(payload)
+    if not items:
+        # 兜底：按消息语义再试一次（个别 MCP server 会把流当成消息列表返回）
+        items = extract_records(payload)
     if not items and isinstance(payload, dict):
         # Graylog 的 list_streams 常见包法：{"streams": [{id, title, ...}]}
         nested = payload.get("streams")
