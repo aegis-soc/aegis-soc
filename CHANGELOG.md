@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### 修复：`up -d --build` 后登录 502——nginx 缓存了旧容器 IP
+
+三个有健康检查的容器（mysql / redis / api）都 healthy，但登录页提交后 502。原因是 `upstream`
+块里的 `server api:8000` 只在 nginx **启动时**解析一次并永久缓存；`docker compose up -d --build`
+重建 api 后容器 IP 变了，而 nginx 容器本身没被重建，仍指向旧 IP，`error.log` 里是
+`connect() failed (111: Connection refused)`。
+
+- `deploy/nginx/nginx.conf` 改为 `resolver 127.0.0.11 valid=10s ipv6=off` + 变量式
+  `proxy_pass http://$aegis_api`，请求时按 10s TTL 重新解析，容器重建后自动跟随，无需重启 nginx
+- 附带好处：api/frontend 未就绪时 nginx 不再启动失败（`upstream` 块解析不到主机会直接拒启）
+- `docs/deploy-cloud.md` §9、`docs/install.md` 排错表补上该现象与「立刻重启 nginx」的临时处置
+
 ### 修复：流清单仍为空——加 REST 兜底 + 把「为什么空」显示到页面
 
 上一版补了 GRN 解析与 `list_resource` 降级，真机仍为空。问题在于：**所有失败都被静默成空数组**，

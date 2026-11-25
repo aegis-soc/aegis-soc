@@ -237,6 +237,7 @@ cd backend && pytest -q
 | 告警 accepted 但没有任务 | 依次检查：熔断开关、白名单命中、IP 是否为内网/保留地址、策略置信度与阈值、设备能力矩阵 |
 | 任务一直 PENDING | 检查 `worker` 是否运行、Redis 是否连通；Beat 每 2 分钟会补偿投递 |
 | 前端 502 | `nginx` 依赖 `frontend` 与 `api`，确认两者已启动 |
+| 登录 502（页面能打开，点登录就 502） | 先看 `docker compose logs --tail=20 nginx`：若是 `connect() failed (111: Connection refused)`，说明 nginx 缓存了 api 的旧 IP（`up -d --build` 重建后 IP 会变）。执行 `docker compose restart nginx` 即可；新版本已用 `resolver 127.0.0.11 valid=10s` 自动跟随 |
 | 构建时 pip 报 `Could not find a version that satisfies…` / `from versions: none` | 拉 PyPI 索引页超时（不是包不存在）。按 2.4 节给 `.env` 设 `AEGIS_PIP_INDEX`（或重跑 `install.sh --cn-mirror`），再 `docker compose build api` |
 | 构建卡在 `npm ci`、日志里是 `registry.npmjs.org` | 同上，设 `AEGIS_NPM_REGISTRY=https://registry.npmmirror.com` 后 `docker compose build frontend` |
 | 想确认实际使用的镜像名 | `docker compose config --images`，应为 `aegis-soc-backend:local` 与 `aegis-soc-frontend:local` |

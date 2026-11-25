@@ -243,6 +243,7 @@ docker compose up -d --build
 |---|---|---|
 | 容器反复重启 | `docker compose logs --tail=100 <服务>` | 多为 MySQL 未就绪或 `.env` 占位值未替换 |
 | API 502 | `docker compose exec nginx nginx -t` | 检查 `api` / `frontend` 是否 healthy |
+| 登录/接口全 502，但 `api` 是 healthy | `docker compose logs --tail=20 nginx`，看是否 `connect() failed (111: Connection refused) while connecting to upstream` | nginx 只在启动时解析一次容器 IP，`up -d --build` 重建 api 后 IP 变了而 nginx 没重建 → 指到旧 IP。立刻 `docker compose restart nginx`；仓库新版已改成 `resolver 127.0.0.11 valid=10s` + 变量式 `proxy_pass`，会自动跟随 IP 变化 |
 | worker 不执行任务 | `docker compose logs -f worker beat` | 确认队列名 `aegis` 一致、`TASK_EAGER` 未误设为 true |
 | Graylog 回调 401/403 | 比对 `GRAYLOG_WEBHOOK_SECRET` | 同时检查时间戳防重放窗口（服务器时间需同步 NTP） |
 | 内存吃满、容器被杀 | `dmesg \| grep -i oom` | 按 §7 裁剪参数、加 swap，或升配到 4G |
