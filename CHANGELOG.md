@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+### 修复：数据源「无数据」——真机返回是 `schema` + `datarows` 列式，参数名是 `range_seconds`
+
+真机试取给出了完整答案：平台只发出了 `{"streams": [...], "limit": 20}`，而 Graylog 实际返回
+`schema`（列定义）+ `datarows`（行数组，20 行）——**消息是有的，只是包法不认识**，
+解析层只认 `messages` 对象列表，于是 20 行被判成 0 条，健康度记成 `empty`。
+
+- `extract_records()` 支持列式返回：按 `schema` 的列顺序把 `datarows` 每行还原成字段 dict；
+  列名兼容 `field` / `name` / `"field: source"` 前缀，容器键兼容 `datarows` / `data_rows` / `rows`、
+  `schema` / `columns`，嵌套包法与 `messages` 对象列表仍照旧
+- 时间窗改用真机参数名 `range_seconds`（值 = 窗口秒数）：此前别名里没有它，窗口一直没发出去，
+  查询范围是服务端默认值——「Graylog 有数据、平台窗口内没数据」的另一半原因
+- 按数据源的 `required_fields` 主动请求列（`fields`）：真机不指定列只回 `source` / `timestamp`，
+  字段契约会把其余字段全判缺失（缺失率 100% 的假告警）；`ts` 自动换成真机字段名 `timestamp`；
+  带 `fields` 被服务端拒时退回不指定列重试，少几列好过整批取不到
+- mock 新增 `--columns` 模式复现该形态（参数表逐字照抄真机 inputSchema），用于回归
+- 修一个自己引入的命名冲突：新增的字段映射表覆盖了 `patrol.FIELD_ALIASES`（IP/严重度别名表），
+  改为 `REQUEST_FIELD_ALIASES`
+
 ### 新增：数据源「试取」——一眼看清「无数据」卡在哪
 
 数据源页选好 stream 后状态仍是「无数据」，而 Graylog 里明明有数据。原来的健康度只取

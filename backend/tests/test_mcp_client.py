@@ -276,6 +276,74 @@ def test_map_arguments_skips_empty_values_and_unknown_schema():
     assert patrol.map_arguments(None, stream_id="x", query="y", start=now, end=now, limit=1) is None
 
 
+# 真机 Graylog 7.1 的 search_messages 参数形状（逐字照抄自 inputSchema）
+GRAYLOG_SCHEMA = {"type": "object", "properties": {
+    "fields": {"type": "array"}, "limit": {"type": "integer"},
+    "offset": {"type": "integer"}, "query": {"type": "string"},
+    "range_seconds": {"type": "integer"},
+    "stream_categories": {"type": "array"}, "streams": {"type": "array"},
+}}
+
+
+def test_map_arguments_uses_range_seconds_and_fields():
+    """真机用 range_seconds 而不是 from/to；不请求 fields 只会回两列。"""
+    from datetime import datetime, timedelta, timezone
+
+    end = datetime(2026, 11, 25, 15, 0, 0, tzinfo=timezone.utc)
+    start = end - timedelta(minutes=30)
+    args = patrol.map_arguments(GRAYLOG_SCHEMA, stream_id="6a30a6ab", query="",
+                                start=start, end=end, limit=20,
+                                fields=patrol._request_fields(
+                                    {"required_fields": ["ts", "src_ip", "action"]}))
+    assert args["range_seconds"] == 1800
+    assert args["streams"] == ["6a30a6ab"]
+    assert args["limit"] == 20
+    # ts 必须换成真机字段名 timestamp，否则请求的是一个不存在的列
+    assert args["fields"] == ["timestamp", "src_ip", "action"]
+    assert "from" not in args and "to" not in args        # schema 没声明就不该发
+    assert "query" not in args                            # 空查询不发
+
+
+def test_map_arguments_omits_empty_fields():
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 11, 25, 15, 0, 0, tzinfo=timezone.utc)
+    args = patrol.map_arguments(GRAYLOG_SCHEMA, stream_id="s1", query="", start=now,
+                                end=now, limit=5, fields=[])
+    assert "fields" not in args       # 空数组会让服务端可能一列都不回
+
+
+# ---------------------------------------------------------------- 列式返回
+def test_extract_records_parses_columnar_with_schema_prefix():
+    """真机返回：schema 列定义 + datarows 行数组，列名带 "field: " 前缀。"""
+    payload = {
+        "schema": [
+            {"column_type": "field", "type": "string", "field": "source", "name": "field: source"},
+            {"column_type": "field", "type": "date", "field": "timestamp", "name": "field: timestamp"},
+        ],
+        "datarows": [["10.46.255.138", "2026-11-25T15:25:00.683Z"],
+                     ["10.46.255.139", "2026-11-25T15:24:58.476Z"]],
+        "metadata": {"keys": ["effective_timerange"]},
+    }
+    records = patrol.extract_records(payload)
+    assert len(records) == 2
+    assert records[0] == {"source": "10.46.255.138", "timestamp": "2026-11-25T15:25:00.683Z"}
+
+
+def test_extract_records_parses_columnar_nested_and_dict_rows():
+    payload = {"data": {"columns": [{"field": "src_ip"}, {"field": "action"}],
+                        "rows": [{"src_ip": "1.1.1.1", "action": "block"},
+                                 ["2.2.2.2", "observe"]]}}
+    records = patrol.extract_records(payload)
+    assert records == [{"src_ip": "1.1.1.1", "action": "block"},
+                       {"src_ip": "2.2.2.2", "action": "observe"}]
+
+
+def test_extract_records_still_reads_message_lists():
+    payload = {"messages": [{"message": {"src_ip": "1.1.1.1"}, "_id": "m1"}], "total": 1}
+    assert patrol.extract_records(payload) == [{"src_ip": "1.1.1.1", "_id": "m1"}]
+
+
 # ---------------------------------------------------------------- 流发现
 class _StreamStub:
     def __init__(self, payload):

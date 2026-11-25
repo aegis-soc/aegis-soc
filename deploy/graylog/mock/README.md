@@ -20,7 +20,14 @@ python deploy/graylog/mock/mock_graylog_mcp.py --port 9001
 python deploy/graylog/mock/mock_graylog_mcp.py --messages 30   # search 返回 30 条合成消息
 python deploy/graylog/mock/mock_graylog_mcp.py --grn           # 模拟真实 Graylog 的 GRN 包法
 python deploy/graylog/mock/mock_graylog_mcp.py --empty-mcp     # MCP 列流回空，验证 REST 兜底
+python deploy/graylog/mock/mock_graylog_mcp.py --columns --messages 20   # 复现真机列式返回
 ```
+
+`--columns` 复现真机 Graylog 7.1 `search_messages` 的真实形态：参数是
+`fields / limit / offset / query / range_seconds / stream_categories / streams`，
+返回是 `schema`（列定义）+ `datarows`（行数组）而不是 `messages` 对象列表。
+用来回归「明明回了 20 行、平台判成 0 条」这类解析问题——平台必须能从列式返回里
+按列顺序还原出字段；同时能看到平台是否发了 `range_seconds`（时间窗）和 `fields`（列）。
 
 `--grn` 复现真实 Graylog 的另一种返回形态：`list_streams` 只回 `grn:graylog:stream:<id>`
 字符串列表（没有流对象），并额外提供 `list_resource(type=stream)` / `describe_resource(grn)`
@@ -38,7 +45,7 @@ python deploy/graylog/mock/mock_graylog_mcp.py --empty-mcp     # MCP 列流回�
 |---|---|
 | `list_streams` | 9 条流：`raw/norm × ztna/ips/waf` + `norm-ztna-reject` + `系统事件`，id 硬编码（重启不变） |
 | `list_fields` | 17 个规范字段（`ts` / `src_ip` / `ua_class` / `_schema_ok` …） |
-| `search_messages` | `--messages N` 时返回 N 条合成消息，否则空 |
+| `search_messages` | `--messages N` 时返回 N 条合成消息，否则空；`--columns` 时改为 `schema` + `datarows` 列式返回 |
 | `aggregate_messages` | 消息条数（跟随 `--messages`） |
 | `list_resource` / `describe_resource` | 仅 `--grn` 模式提供，返回 GRN 列表与单个流定义 |
 | `GET /api/streams` | 模拟 Graylog REST 流清单（`{"streams": [...], "total": 9}`），供平台 REST 兜底 |

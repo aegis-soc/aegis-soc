@@ -104,11 +104,42 @@ def build_messages(count: int, stream_id: str) -> list[dict]:
     return out
 
 
+def build_columnar(messages: list[dict], args: dict) -> dict:
+    """按真机 Graylog 的列式包法返回：``schema`` 列定义 + ``datarows`` 行数组。
+
+    真机不传 ``fields`` 时只回 ``source`` / ``timestamp`` 两列；传了 ``fields``
+    就按请求的列顺序返回。``--columns`` 模式复现这个形态，用来回归平台的解析层：
+    不认 ``datarows`` 就会「回了 20 行、平台判成 0 条」。
+    """
+    wanted = args.get("fields")
+    names = ([str(x) for x in wanted if str(x).strip()]
+             if isinstance(wanted, list) and wanted else ["source", "timestamp"])
+    schema = [{"column_type": "field",
+               "type": "date" if n in ("timestamp", "ts") else "string",
+               "field": n, "name": f"field: {n}"} for n in names]
+    rows: list[list] = []
+    for msg in messages:
+        row = []
+        for n in names:
+            value = msg.get(n)
+            if n == "timestamp" and isinstance(value, (int, float)):
+                value = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(value))
+            row.append(value)
+        rows.append(row)
+    return {
+        "schema": schema,
+        "datarows": rows,
+        "metadata": {"keys": ["effective_timerange"],
+                     "effective_timerange": {"range_seconds": args.get("range_seconds")}},
+    }
+
+
 class MockHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     message_count = 0
     grn_mode = False
     empty_mcp = False
+    columns_mode = False
 
     def log_message(self, *args):  # 静音，避免刷屏
         pass
@@ -186,6 +217,17 @@ class MockHandler(BaseHTTPRequestHandler):
                  "inputSchema": {"type": "object", "properties": {
                      "query": {"type": "string"}, "stream_id": {"type": "string"}}}},
             ]
+            if MockHandler.columns_mode:
+                # 真机 Graylog 7.1 的 search_messages 参数形状（字段名逐个照抄）
+                tools[2] = {
+                    "name": "search_messages", "description": "Search messages, columnar result",
+                    "inputSchema": {"type": "object", "properties": {
+                        "fields": {"type": "array"}, "limit": {"type": "integer"},
+                        "offset": {"type": "integer"}, "query": {"type": "string"},
+                        "range_seconds": {"type": "integer"},
+                        "stream_categories": {"type": "array"},
+                        "streams": {"type": "array"}}},
+                }
             if MockHandler.grn_mode:
                 tools += [
                     {"name": "list_resource", "description": "List resources by type",
@@ -244,7 +286,10 @@ class MockHandler(BaseHTTPRequestHandler):
         if name == "list_fields":
             return {"structuredContent": {"fields": [{"name": f} for f in FIELDS]}}
         if name in ("search_messages", "aggregate_messages"):
-            stream_id = str(args.get("stream_id") or args.get("query") or "65f3a2b1c0d4e5f6a7b8c9d1")
+            streams = args.get("streams")
+            first = str(streams[0]) if isinstance(streams, list) and streams else ""
+            stream_id = (first or str(args.get("stream_id") or args.get("query")
+                                     or "65f3a2b1c0d4e5f6a7b8c9d1"))
             limit = self.message_count
             try:
                 limit = min(int(args.get("limit") or limit), limit) if self.message_count else 0
@@ -253,6 +298,12 @@ class MockHandler(BaseHTTPRequestHandler):
             messages = build_messages(limit, stream_id) if limit else []
             if name == "aggregate_messages":
                 return {"structuredContent": {"count": len(messages), "total": len(messages)}}
+            if MockHandler.columns_mode:
+                payload = build_columnar(messages, args)
+                return {
+                    "content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}],
+                    "structuredContent": payload,
+                }
             return {"structuredContent": {"messages": messages, "total": len(messages)}}
         return {"content": [{"type": "text", "text": f"unknown tool: {name}"}],
                 "isError": True}
@@ -271,13 +322,19 @@ def main() -> None:
     parser.add_argument("--empty-mcp", action="store_true",
                         help="让 MCP 的 list_streams / list_resource 都回空，用于验证平台"
                              "退到 REST GET /api/streams 的兜底是否生效")
+    parser.add_argument("--columns", action="store_true",
+                        help="复现真机 Graylog 的列式返回：search_messages 的参数是 "
+                             "fields/limit/offset/query/range_seconds/stream_categories/streams，"
+                             "返回 schema + datarows（行数组），用于回归平台的解析层")
     args = parser.parse_args()
 
     MockHandler.grn_mode = args.grn
     MockHandler.empty_mcp = args.empty_mcp
+    MockHandler.columns_mode = args.columns
     MockHandler.message_count = max(args.messages, 0)
     server = ThreadingHTTPServer((args.host, args.port), MockHandler)
-    modes = " / ".join(m for m, on in (("GRN 包法", args.grn), ("MCP 空返回", args.empty_mcp)) if on)
+    modes = " / ".join(m for m, on in (("GRN 包法", args.grn), ("MCP 空返回", args.empty_mcp),
+                                       ("列式返回", args.columns)) if on)
     print(f"mock-graylog-mcp 已启动: http://{args.host}:{args.port}/mcp", flush=True)
     print(f"  流 {len(STREAMS)} 条 / 字段 {len(FIELDS)} 个 / 合成消息 {MockHandler.message_count} 条每次"
           + (f" / {modes}" if modes else ""), flush=True)

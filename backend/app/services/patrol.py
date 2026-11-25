@@ -127,13 +127,20 @@ ARG_ALIASES: dict[str, tuple[str, ...]] = {
     "limit": ("limit", "size", "per_page", "page_size", "count", "max_results"),
     # 有些实现（含 Graylog 风格）用「过去多少秒」代替绝对时间戳：
     # 只声明 range/interval 时，发绝对时间戳会被忽略，窗口就悄悄变成服务端默认值。
-    "range": ("range", "interval", "time_range", "time_range_seconds",
+    "range": ("range_seconds", "range", "interval", "time_range", "time_range_seconds",
               "last_seconds", "seconds", "last"),
+    # 只取这些列。不传时 Graylog 只回 source/timestamp 两列，字段契约统计会全判缺失。
+    "fields": ("fields", "columns", "select_fields"),
 }
+
+# 平台内部字段名 → Graylog 原生字段名。配置里按规范写 `ts`，但真正的消息字段叫
+# `timestamp`；拼 `fields` 时不换名会请求一个不存在的列。
+REQUEST_FIELD_ALIASES: dict[str, str] = {"ts": "timestamp", "src": "source"}
 
 
 def map_arguments(schema: dict[str, Any] | None, *, stream_id: str, query: str,
-                  start: datetime, end: datetime, limit: int) -> dict[str, Any] | None:
+                  start: datetime, end: datetime, limit: int,
+                  fields: list[str] | None = None) -> dict[str, Any] | None:
     """按工具 inputSchema 自动拼参数；无法映射时返回 None（由调用方走模板兜底）。
 
     只放 schema 声明过的字段——多传未知参数会被严格实现直接拒绝。
@@ -149,6 +156,7 @@ def map_arguments(schema: dict[str, Any] | None, *, stream_id: str, query: str,
         "to": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "limit": limit,
         "range": max(1, int((end - start).total_seconds())),
+        "fields": list(fields or []),
     }
     arguments: dict[str, Any] = {}
     absolute: set[str] = set()
@@ -159,6 +167,8 @@ def map_arguments(schema: dict[str, Any] | None, *, stream_id: str, query: str,
         value = values[role]
         if isinstance(value, str) and not value.strip():
             continue          # 空查询/空流 id 不传，避免服务端当成精确过滤条件
+        if isinstance(value, list) and not value:
+            continue          # 没声明必填字段时不要发空 fields，否则可能一列都不回
         declared = properties.get(name) or {}
         kind = declared.get("type") if isinstance(declared, dict) else None
         if role == "stream" and kind == "array":
@@ -253,6 +263,54 @@ def _flatten(item: Any) -> dict[str, Any]:
     return {str(k).lower(): v for k, v in merged.items()}
 
 
+def _records_from_columns(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """把「列定义 + 行数组」还原成 dict 列表。
+
+    Graylog 的 MCP ``search_messages`` 有一种返回是列式的::
+
+        {"schema":  [{"field": "source", ...}, {"field": "timestamp", ...}],
+         "datarows": [["10.46.255.138", "2026-11-25T15:25:00.683Z"], ...],
+         "metadata": {"keys": ["effective_timerange"]}}
+
+    消息本身在 ``datarows`` 里，按 ``schema`` 的列顺序对应取值。不认这种包法的话
+    会「明明回了 20 行、平台判成 0 条」——真机上就是这么踩的。
+    """
+    rows = None
+    for key in ("datarows", "data_rows", "rows"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            rows = value
+            break
+    if rows is None:
+        return []
+    names: list[str] = []
+    columns = payload.get("schema")
+    if not isinstance(columns, list):
+        columns = payload.get("columns")      # 有些实现把列定义叫 columns
+    if isinstance(columns, list):
+        for column in columns:
+            if isinstance(column, str):
+                names.append(column.strip().lower())
+                continue
+            if not isinstance(column, dict):
+                continue
+            # 有的实现把列名放在 name 里、写成 "field: source"
+            name = str(column.get("field") or column.get("name") or "").strip().lower()
+            if name.startswith("field:"):
+                name = name.split(":", 1)[1].strip()
+            names.append(name)
+    records: list[dict[str, Any]] = []
+    for row in rows:
+        if isinstance(row, dict):
+            records.append(_flatten(row))
+        elif isinstance(row, (list, tuple)):
+            item = {names[i]: value for i, value in enumerate(row)
+                    if i < len(names) and names[i]}
+            if item:
+                records.append(item)
+    return records
+
+
 def extract_records(payload: Any, _depth: int = 0) -> list[dict[str, Any]]:
     """从 MCP 工具返回里取出消息列表，兼容常见几种包法（最多递归 3 层）。"""
     if payload is None or _depth > 3:
@@ -265,6 +323,9 @@ def extract_records(payload: Any, _depth: int = 0) -> list[dict[str, Any]]:
     if isinstance(payload, list):
         return [_flatten(x) for x in payload if isinstance(x, dict)]
     if isinstance(payload, dict):
+        columns = _records_from_columns(payload)
+        if columns:
+            return columns
         for key in ("messages", "data", "records", "items", "results", "hits", "documents"):
             value = payload.get(key)
             if isinstance(value, list):
@@ -520,12 +581,15 @@ def _window(db: Session, now: datetime, cfg: PatrolConfig) -> tuple[datetime, da
 
 def build_search_arguments(client: McpHttpClient, stream: dict[str, Any], start: datetime,
                            end: datetime, limit: int, cfg: PatrolConfig | None = None,
-                           schema: dict[str, Any] | None = None) -> dict[str, Any] | None:
+                           schema: dict[str, Any] | None = None,
+                           with_fields: bool = True) -> dict[str, Any] | None:
     """拼「取一批日志」的调用参数。
 
     两个来源：``cfg.args`` 显式模板优先（现场适配用），否则按工具 inputSchema
     自动映射，都映射不到才退回最常见的字段形状。抽成独立函数是为了让巡检和
     「试取」诊断共用同一条拼参逻辑——诊断里看到的参数，必须就是巡检真正发出去的。
+
+    ``with_fields=False`` 用于重试：带了 ``fields`` 被服务端拒时，退回不指定列。
     """
     cfg = cfg or load_config()
     stream_id = str(stream.get("stream_id") or "")
@@ -534,14 +598,30 @@ def build_search_arguments(client: McpHttpClient, stream: dict[str, Any], start:
     if template:
         return render_args(template, stream_id=stream_id, query=query,
                            start=start, end=end, limit=limit)
+    wanted = _request_fields(stream) if with_fields else []
     return map_arguments(
         schema if schema is not None else _tool_schema(client, cfg.tool),
         stream_id=stream_id, query=query, start=start, end=end, limit=limit,
+        fields=wanted,
     ) or render_args(
         '{"stream_id": "${stream_id}", "query": "${query}", "from": "${from}", '
         '"to": "${to}", "limit": ${limit}}',
         stream_id=stream_id, query=query, start=start, end=end, limit=limit,
     )
+
+
+def _request_fields(stream: dict[str, Any]) -> list[str]:
+    """把配置里的 ``required_fields`` 翻成要请求的列名（``ts`` → ``timestamp``）。
+
+    不指定列时 Graylog 只回 ``source`` / ``timestamp`` 两列，巡检的字段契约统计
+    会把其余字段全判成缺失（缺失率 100%、健康度 degraded），纯属假告警。
+    """
+    out: list[str] = []
+    for name in stream.get("required_fields") or []:
+        text = REQUEST_FIELD_ALIASES.get(str(name).strip(), str(name).strip())
+        if text and text not in out:
+            out.append(text)
+    return out
 
 
 # 「试取」默认回看 30 分钟：比巡检窗口宽，用来区分「本轮恰好没消息」与「根本取不到」
@@ -619,7 +699,14 @@ def probe_stream(stream: dict[str, Any], *, cfg: PatrolConfig | None = None, db=
         try:
             payload = parse_tool_result(client.call_tool(cfg.tool, args or {}))
         except McpError as exc:
-            return [], "", args or {}, str(exc)[:300]
+            if not (args or {}).get("fields"):
+                return [], "", args or {}, str(exc)[:300]
+            args = build_search_arguments(client, probe, start, end, limit,
+                                          cfg=cfg, schema=schema, with_fields=False)
+            try:
+                payload = parse_tool_result(client.call_tool(cfg.tool, args or {}))
+            except McpError as retry_exc:
+                return [], "", args or {}, str(retry_exc)[:300]
         return extract_records(payload), _raw_preview(payload), args or {}, ""
 
     records, raw, args, error = _run(str(stream.get("stream_id") or ""))
@@ -651,15 +738,24 @@ def _fetch_stream(client: McpHttpClient, stream: dict[str, Any], start: datetime
         status["skipped"] = "未配置 stream_id / query"
         return [], status
     cfg = cfg or load_config()
-    arguments = build_search_arguments(
-        client, stream, start, end, limit, cfg=cfg,
-        schema=_tool_schema(client, cfg.tool),
-    )
+    schema = _tool_schema(client, cfg.tool)
+    arguments = build_search_arguments(client, stream, start, end, limit, cfg=cfg, schema=schema)
     try:
         result = client.call_tool(cfg.tool, arguments)
     except McpError as exc:
-        status["error"] = str(exc)[:300]
-        return [], status
+        # 指定列被服务端拒（列名不在该流里、实现不认 fields 等）时退回不指定列：
+        # 少几列好过整批取不到，字段缺失率会在健康度里如实反映。
+        if not (arguments or {}).get("fields"):
+            status["error"] = str(exc)[:300]
+            return [], status
+        logger.info("源 %s 指定 fields 被拒，改为不指定列重试：%s", stream["name"], exc)
+        arguments = build_search_arguments(client, stream, start, end, limit,
+                                           cfg=cfg, schema=schema, with_fields=False)
+        try:
+            result = client.call_tool(cfg.tool, arguments)
+        except McpError as retry_exc:
+            status["error"] = str(retry_exc)[:300]
+            return [], status
     records = extract_records(parse_tool_result(result))
     for record in records:
         record.setdefault("_stream", stream["name"])
