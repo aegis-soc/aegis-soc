@@ -64,6 +64,7 @@ export const api = {
 
   logSources: () => http.get('/log-sources'),
   logSourceUpdate: (code, data) => http.put(`/log-sources/${code}`, data),
+  logSourceProbe: (code, params) => http.post(`/log-sources/${code}/probe`, null, { params, timeout: 60000 }),
 
   chatAsk: (data) => http.post('/chat/ask', data, { timeout: 120000 }),
   chatSessions: () => http.get('/chat/sessions'),

@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.common import BizError
 from app.database import utcnow
 from app.models import PatrolRun
-from app.services import patrol_settings
+from app.services import patrol, patrol_settings
 
 logger = logging.getLogger("aegis")
 
@@ -143,6 +143,34 @@ def list_sources(db: Session) -> dict[str, Any]:
             "doc": "docs/log-source-spec.md",
         },
     }
+
+
+def probe_source(db: Session, source_code: str, minutes: int | None = None,
+                 limit: int = 20) -> dict[str, Any]:
+    """对单个源立即取一次数，返回实际发送的参数与服务端原始返回。
+
+    与巡检的区别：**不受巡检间隔约束、也不落库**，纯粹是排查「为什么显示无数据」。
+    """
+    code = (source_code or "").strip().lower()
+    cfg = patrol_settings.load(db)
+    target = next((s for s in cfg.streams if s.get("source_code") == code), None)
+    if target is None:
+        target = next((s for s in patrol_settings.DEFAULT_STREAMS
+                       if s["source_code"] == code), None)
+    if target is None:
+        raise BizError(f"未找到日志源 {code}", 404, 404)
+    if not cfg.configured:
+        raise BizError("尚未配置 Graylog MCP 地址", 400, 400)
+    result = patrol.probe_stream(
+        target, cfg=cfg,
+        minutes=minutes or patrol.PROBE_WINDOW_MINUTES, limit=limit,
+    )
+    result["source_code"] = code
+    result["label"] = target.get("label") or target.get("name")
+    logger.info("试取日志源 %s：fetched=%s error=%s（对照组 %s）", code,
+                result.get("fetched"), result.get("error") or "-",
+                (result.get("control") or {}).get("fetched"))
+    return result
 
 
 UPDATABLE = {"stream_id", "query", "enabled", "required_fields", "schema_version", "label", "purpose"}

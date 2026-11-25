@@ -32,6 +32,22 @@ def list_log_sources(
     return ok(log_sources.list_sources(db))
 
 
+@router.post("/{source_code}/probe")
+def probe_log_source(
+    source_code: str,
+    minutes: int | None = None,
+    limit: int = 20,
+    db: Session = Depends(get_db),
+    _=Depends(require_perms("system:*")),
+):
+    """对一个源立即取一次数，返回实际发送的 MCP 参数与服务端原始返回。
+
+    用于排查数据源页「无数据」：参数拼错、stream id 不对、还是这条流真没消息，
+    一次就能分清。不落库、不影响巡检检查点。
+    """
+    return ok(log_sources.probe_source(db, source_code, minutes=minutes, limit=limit))
+
+
 @router.put("/{source_code}")
 def update_log_source(
     source_code: str,

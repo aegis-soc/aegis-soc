@@ -500,6 +500,100 @@ def _window(db: Session, now: datetime, cfg: PatrolConfig) -> tuple[datetime, da
     return start, now
 
 
+def build_search_arguments(client: McpHttpClient, stream: dict[str, Any], start: datetime,
+                           end: datetime, limit: int, cfg: PatrolConfig | None = None,
+                           schema: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """拼「取一批日志」的调用参数。
+
+    两个来源：``cfg.args`` 显式模板优先（现场适配用），否则按工具 inputSchema
+    自动映射，都映射不到才退回最常见的字段形状。抽成独立函数是为了让巡检和
+    「试取」诊断共用同一条拼参逻辑——诊断里看到的参数，必须就是巡检真正发出去的。
+    """
+    cfg = cfg or load_config()
+    stream_id = str(stream.get("stream_id") or "")
+    query = str(stream.get("query") or "")
+    template = (cfg.args or "").strip()
+    if template:
+        return render_args(template, stream_id=stream_id, query=query,
+                           start=start, end=end, limit=limit)
+    return map_arguments(
+        schema if schema is not None else _tool_schema(client, cfg.tool),
+        stream_id=stream_id, query=query, start=start, end=end, limit=limit,
+    ) or render_args(
+        '{"stream_id": "${stream_id}", "query": "${query}", "from": "${from}", '
+        '"to": "${to}", "limit": ${limit}}',
+        stream_id=stream_id, query=query, start=start, end=end, limit=limit,
+    )
+
+
+# 「试取」默认回看 30 分钟：比巡检窗口宽，用来区分「本轮恰好没消息」与「根本取不到」
+PROBE_WINDOW_MINUTES = 30
+PROBE_SAMPLE_FIELDS = ("timestamp", "ts", "source", "src_ip", "dst_ip", "username",
+                       "action", "severity", "url", "status_code", "stream")
+
+
+def probe_stream(stream: dict[str, Any], *, cfg: PatrolConfig | None = None, db=None,
+                 minutes: int = PROBE_WINDOW_MINUTES, limit: int = 20) -> dict[str, Any]:
+    """对单个源跑一次真实取数，把「发了什么参数、服务端回了什么」原样带出来。
+
+    数据源页显示「无数据」时最需要回答两件事：参数是不是按工具真实 schema 拼的、
+    服务端到底回了什么。所以这里同时跑一次**不带流过滤**的对照组：对照组有数、
+    带过滤没有，说明是过滤参数名或 stream id 的问题，而不是这条流断流。
+    """
+    cfg = cfg or load_config(db)
+    end = utcnow()
+    start = end - timedelta(minutes=max(1, minutes))
+    out: dict[str, Any] = {
+        "tool": cfg.tool,
+        "stream": {"name": stream.get("name") or "", "stream_id": stream.get("stream_id") or "",
+                   "query": stream.get("query") or ""},
+        "window": {"minutes": minutes,
+                   "from": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                   "to": end.strftime("%Y-%m-%dT%H:%M:%SZ")},
+        "schema": {}, "arguments": {}, "fetched": 0, "sample": [],
+        "raw": "", "error": "", "control": {"arguments": {}, "fetched": 0, "error": ""},
+    }
+    try:
+        client = build_client(cfg)
+    except Exception as exc:  # 配置缺 URL/Token 时 build_client 可能抛
+        out["error"] = f"构建 MCP 客户端失败：{exc}"[:300]
+        return out
+
+    schema = _tool_schema(client, cfg.tool)
+    props = schema.get("properties") if isinstance(schema, dict) else None
+    if isinstance(props, dict):
+        out["schema"] = {
+            "properties": {str(k): str((v or {}).get("type") or "") for k, v in props.items()},
+            "required": [str(x) for x in (schema.get("required") or [])],
+        }
+
+    def _run(stream_id: str) -> tuple[int, str, list[dict[str, Any]], str, dict[str, Any] | None]:
+        probe = dict(stream)
+        probe["stream_id"] = stream_id
+        args = build_search_arguments(client, probe, start, end, limit, cfg=cfg, schema=schema)
+        try:
+            payload = parse_tool_result(client.call_tool(cfg.tool, args or {}))
+        except McpError as exc:
+            return 0, "", [], str(exc)[:300], args
+        records = extract_records(payload)
+        try:
+            raw = json.dumps(payload, ensure_ascii=False)[:1200]
+        except (TypeError, ValueError):
+            raw = str(payload)[:1200]
+        return len(records), raw, records, "", args
+
+    fetched, raw, records, error, args = _run(str(stream.get("stream_id") or ""))
+    out.update({"fetched": fetched, "raw": raw, "error": error, "arguments": args or {}})
+    out["sample"] = [
+        {k: rec.get(k) for k in PROBE_SAMPLE_FIELDS if rec.get(k) not in (None, "")}
+        for rec in records[:3]
+    ]
+    if not error:
+        c_fetched, _, _, c_error, c_args = _run("")
+        out["control"] = {"arguments": c_args or {}, "fetched": c_fetched, "error": c_error}
+    return out
+
+
 def _fetch_stream(client: McpHttpClient, stream: dict[str, Any], start: datetime,
                   end: datetime, limit: int,
                   cfg: PatrolConfig | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -516,28 +610,10 @@ def _fetch_stream(client: McpHttpClient, stream: dict[str, Any], start: datetime
         status["skipped"] = "未配置 stream_id / query"
         return [], status
     cfg = cfg or load_config()
-    template = (cfg.args or "").strip()
-    if template:
-        arguments = render_args(
-            template,
-            stream_id=stream.get("stream_id", ""),
-            query=stream.get("query", ""),
-            start=start, end=end, limit=limit,
-        )
-    else:
-        # 优先按工具真实 schema 自动映射；拿不到 schema 才退回默认形状
-        arguments = map_arguments(
-            _tool_schema(client, cfg.tool),
-            stream_id=stream.get("stream_id", ""),
-            query=stream.get("query", ""),
-            start=start, end=end, limit=limit,
-        ) or render_args(
-            '{"stream_id": "${stream_id}", "query": "${query}", "from": "${from}", '
-            '"to": "${to}", "limit": ${limit}}',
-            stream_id=stream.get("stream_id", ""),
-            query=stream.get("query", ""),
-            start=start, end=end, limit=limit,
-        )
+    arguments = build_search_arguments(
+        client, stream, start, end, limit, cfg=cfg,
+        schema=_tool_schema(client, cfg.tool),
+    )
     try:
         result = client.call_tool(cfg.tool, arguments)
     except McpError as exc:

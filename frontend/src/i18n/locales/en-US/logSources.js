@@ -88,6 +88,22 @@ export default {
     verifyMissing: 'Stream ID not found in Graylog',
     verifyNoMcp: 'MCP not configured, cannot verify',
     verifySaveFirst: 'Save first: Graylog only matches the saved stream ID',
+    probe: 'Probe',
+  },
+
+  // "Probe" dialog: shows the MCP arguments actually sent and the raw response
+  probe: {
+    title: 'Probe data: {name}',
+    tool: 'Tool',
+    fetched: 'With stream filter',
+    control: 'Without filter',
+    args: 'Arguments actually sent',
+    raw: 'Raw response (truncated to 1200 chars)',
+    again: 'Probe again',
+    emptyRaw: '(empty response)',
+    hintOk: 'Messages returned: the stream ID and arguments are correct. The "no data" state only means the last patrol window happened to contain no new logs.',
+    hintFiltered: 'The unfiltered query returns messages but the filtered one does not: the filter is not taking effect — likely the parameter name does not match this tool schema, or the stream_id is not recognised by this MCP server. Compare the arguments above with the stream ID in Graylog.',
+    hintEmpty: 'Both queries returned 0: this stream really has no messages in the window. Widen the range in Graylog (e.g. 24h) to confirm whether the stream holds any data at all; if not, the collection/pipeline side is not writing to it.',
   },
   form: {
     title: 'Edit source · {name}',

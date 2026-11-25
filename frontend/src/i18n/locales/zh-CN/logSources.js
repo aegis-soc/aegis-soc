@@ -88,6 +88,22 @@ export default {
     verifyMissing: 'Graylog 里找不到这个流 ID',
     verifyNoMcp: '未配置 MCP，无法校验',
     verifySaveFirst: '先保存再校验：Graylog 只认已保存的 stream_id',
+    probe: '试取',
+  },
+
+  // 「试取」弹窗：把实际发送的 MCP 参数与服务端原始返回摆出来
+  probe: {
+    title: '试取数据：{name}',
+    tool: '工具',
+    fetched: '带流过滤',
+    control: '不带过滤',
+    args: '实际发送的参数',
+    raw: '服务端原始返回（截断 1200 字符）',
+    again: '重新试取',
+    emptyRaw: '（返回为空）',
+    hintOk: '取到了消息：说明流 ID 与参数都对，页面显示「无数据」只是上一轮巡检窗口内恰好没有新日志。',
+    hintFiltered: '不带过滤能取到消息、带过滤取不到：说明过滤条件不生效——多半是参数名与该工具 schema 不一致，或 stream_id 不是这个 MCP 服务认识的 ID。请对照上面「实际发送的参数」与 Graylog 里的流 ID。',
+    hintEmpty: '两种查法都是 0 条：这个时间窗内该流确实没有消息。到 Graylog 里把时间范围放宽（如 24 小时）确认流里到底有没有数据；若也没有，是采集/pipeline 侧没写进来。',
   },
   form: {
     title: '编辑数据源 · {name}',

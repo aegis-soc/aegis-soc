@@ -143,10 +143,13 @@
           </template>
         </el-table-column>
 
-        <el-table-column :label="t('logSources.col.actions')" width="120" fixed="right">
+        <el-table-column :label="t('logSources.col.actions')" width="170" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" size="small" :disabled="!isAdmin" @click="openEdit(row)">
               {{ t('logSources.action.edit') }}
+            </el-button>
+            <el-button link type="warning" size="small" :disabled="!isAdmin" @click="openProbe(row)">
+              {{ t('logSources.action.probe') }}
             </el-button>
           </template>
         </el-table-column>
@@ -341,6 +344,38 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="probe.open" :title="t('logSources.probe.title', { name: probe.label })" width="700px" destroy-on-close>
+      <div v-loading="probe.loading" style="min-height: 120px">
+        <template v-if="probe.data">
+          <el-alert v-if="probe.data.error" type="error" show-icon :closable="false"
+                    :title="probe.data.error" style="margin-bottom: 12px" />
+          <el-descriptions v-else :column="3" size="small" border>
+            <el-descriptions-item :label="t('logSources.probe.tool')">
+              <span class="mono">{{ probe.data.tool }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item :label="t('logSources.probe.fetched')">
+              <b>{{ probe.data.fetched }}</b>
+            </el-descriptions-item>
+            <el-descriptions-item :label="t('logSources.probe.control')">
+              {{ probe.data.control.fetched }}
+            </el-descriptions-item>
+          </el-descriptions>
+
+          <p v-if="probeHint" class="dialog-desc" style="margin: 10px 0 0">{{ probeHint }}</p>
+
+          <h4 class="probe-title">{{ t('logSources.probe.args') }}</h4>
+          <pre class="code-block">{{ pretty(probe.data.arguments) }}</pre>
+
+          <h4 class="probe-title">{{ t('logSources.probe.raw') }}</h4>
+          <pre class="code-block">{{ probe.data.raw || t('logSources.probe.emptyRaw') }}</pre>
+        </template>
+      </div>
+      <template #footer>
+        <el-button size="small" :loading="probe.loading" @click="runProbe(probe.row)">{{ t('logSources.probe.again') }}</el-button>
+        <el-button size="small" @click="probe.open = false">{{ t('common.action.close') }}</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -383,6 +418,17 @@ const mcpTokenSet = ref(false)
 const mcpTokenHint = ref('')
 const mcpTesting = ref(false)
 const mcpSaving = ref(false)
+
+// 「试取」：对单个源立即打一次 Graylog（不受巡检间隔约束、不落库），
+// 把实际发送的参数和服务端原始返回摆出来——「无数据」到底卡在哪一步一看就知道。
+const probe = reactive({ open: false, loading: false, row: null, label: '', data: null })
+const probeHint = computed(() => {
+  const d = probe.data
+  if (!d || d.error) return ''
+  if (d.fetched > 0) return t('logSources.probe.hintOk')
+  if ((d.control?.fetched || 0) > 0) return t('logSources.probe.hintFiltered')
+  return t('logSources.probe.hintEmpty')
+})
 
 const ROLE_BY_CODE = { ips: 'IPS', waf: 'WAF', ztna: 'ZTNA' }
 const suggestedRole = computed(() => ROLE_BY_CODE[drawer.row?.source_code] || '')
@@ -641,6 +687,37 @@ async function verifyStream(row) {
   }
 }
 
+function pretty(value) {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch (e) {
+    return String(value)
+  }
+}
+
+function openProbe(row) {
+  probe.open = true
+  probe.row = row
+  probe.label = row?.label || row?.name || ''
+  probe.data = null
+  runProbe(row)
+}
+
+async function runProbe(row) {
+  if (!row) return
+  probe.row = row
+  probe.loading = true
+  try {
+    probe.data = await api.logSourceProbe(row.source_code)
+  } catch (e) {
+    // 拦截器已提示
+  } finally {
+    probe.loading = false
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -651,6 +728,25 @@ onMounted(load)
 }
 .diag-box {
   margin-top: 10px;
+}
+.probe-title {
+  margin: 14px 0 6px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  font-weight: 600;
+}
+.code-block {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 220px;
+  overflow: auto;
+  background: var(--el-fill-color-light);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 .diag-row {
   display: flex;
