@@ -156,7 +156,9 @@ def test_probe_uses_draft_without_persisting(client, auth_headers, monkeypatch):
         return _Stub()
 
     monkeypatch.setattr(patrol, "build_client", _build)
-    monkeypatch.setattr(patrol, "discover_streams", lambda *a, **k: [])
+    # 试连只关心地址/token 透传与不落库，流发现整体打桩
+    monkeypatch.setattr(patrol, "discover_streams_detailed",
+                        lambda *a, **k: {"streams": [], "attempts": []})
 
     response = client.post("/api/v1/patrols/mcp/test", headers=auth_headers, json={
         "mcp_url": "https://draft.lab/api/mcp", "mcp_token": "draft-token",

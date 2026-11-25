@@ -272,6 +272,18 @@
           </template>
         </el-table-column>
       </el-table>
+      <el-collapse v-if="!streamOptions.length && streamAttempts.length" class="diag-box">
+        <el-collapse-item :title="t('logSources.stream.diagTitle')" name="diag">
+          <p class="dialog-desc">{{ t('logSources.stream.diagHint') }}</p>
+          <div v-for="(a, i) in streamAttempts" :key="i" class="diag-row">
+            <span :class="['diag-dot', a.ok ? 'ok' : 'fail']"></span>
+            <span class="diag-step">{{ a.step }}</span>
+            <span v-if="a.ok" class="diag-count">→ {{ a.count }}</span>
+            <span v-else-if="a.detail" class="diag-err">{{ a.detail }}</span>
+            <div v-if="a.raw" class="diag-raw">{{ a.raw }}</div>
+          </div>
+        </el-collapse-item>
+      </el-collapse>
       <template #footer>
         <el-button size="small" :loading="loadingStreams" @click="loadStreams(true)">
           {{ loadingStreams ? t('logSources.stream.loading') : t('logSources.stream.refresh') }}
@@ -359,6 +371,7 @@ const streamOptions = ref([])
 const loadingStreams = ref(false)
 const streamsLoaded = ref(false)
 const streamHint = ref('')
+const streamAttempts = ref([])
 const mcpReady = ref(false)
 const streamDialog = reactive({ open: false })
 
@@ -446,12 +459,14 @@ async function loadStreams(force = false) {
     if (!info?.configured) {
       mcpReady.value = false
       streamOptions.value = []
+      streamAttempts.value = []
       streamHint.value = t('logSources.stream.noMcp')
       return
     }
     mcpReady.value = true
     const list = Array.isArray(info.streams) ? info.streams : []
     streamOptions.value = list
+    streamAttempts.value = Array.isArray(info.streams_attempts) ? info.streams_attempts : []
     sortStreams()
     streamsLoaded.value = true
     streamHint.value = list.length
@@ -633,6 +648,52 @@ onMounted(load)
 .head-actions {
   display: flex;
   gap: 8px;
+}
+.diag-box {
+  margin-top: 10px;
+}
+.diag-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 0;
+  font-size: 12px;
+  border-bottom: 1px dashed var(--el-border-color-lighter);
+}
+.diag-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+.diag-dot.ok {
+  background: var(--el-color-success);
+}
+.diag-dot.fail {
+  background: var(--el-color-danger);
+}
+.diag-step {
+  font-family: var(--el-font-family-mono, monospace);
+  color: var(--el-text-color-regular);
+}
+.diag-count {
+  color: var(--el-color-success);
+}
+.diag-err {
+  color: var(--el-color-danger);
+  word-break: break-all;
+}
+.diag-raw {
+  flex-basis: 100%;
+  margin: 2px 0 4px 12px;
+  padding: 4px 8px;
+  background: var(--el-fill-color-lighter);
+  border-radius: 4px;
+  color: var(--el-text-color-secondary);
+  word-break: break-all;
+  max-height: 72px;
+  overflow: auto;
 }
 .dialog-desc {
   font-size: 12px;

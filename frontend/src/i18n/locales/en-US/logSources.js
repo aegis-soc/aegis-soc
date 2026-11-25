@@ -121,6 +121,8 @@ export default {
     dialogHint: 'Every stream the Graylog MCP exposes. The platform should only use normalized streams (norm-*); raw-* is for troubleshooting.',
     copy: 'Copy',
     copied: 'ID copied',
+    diagTitle: 'Why is the list empty? (diagnostics)',
+    diagHint: 'The platform tried MCP stream listing, the resource API and Graylog REST in order. Look for the red step: 401/403 means the token lacks Streams:read; connection errors point at the address or TLS; the raw response below can be copied for feedback.',
     col: {
       title: 'Stream',
       id: 'Stream ID',

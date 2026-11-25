@@ -4,6 +4,23 @@
 
 ## [Unreleased]
 
+### 修复：流清单仍为空——加 REST 兜底 + 把「为什么空」显示到页面
+
+上一版补了 GRN 解析与 `list_resource` 降级，真机仍为空。问题在于：**所有失败都被静默成空数组**，
+页面只显示「没有流」，既看不到原因，也没有最后一条不依赖 MCP 的路径。
+
+- **新增最后一级兜底**：MCP 的 `list_streams` / `list_resource` 都拿不到时，直接打 Graylog REST
+  `GET /api/streams`（从 MCP 地址自动派生：`.../api/mcp` → `.../api/streams`），鉴权复用同一套
+  Basic `<token>:token`。REST 一定存在，不受 MCP 开关/版本影响
+- **诊断可见**：`/patrols/mcp/status` 新增 `streams_attempts`，逐级返回
+  `{step, ok, count, detail, raw}`（原始返回截断 600 字符）；流清单弹窗在空状态显示可折叠的
+  「为什么没拿到流？」，401/403 直接标注「需要 Streams:read 权限」
+- **重构**：`discover_streams_detailed()` 返回 `{streams, attempts}`；`discover_streams()` 退化为薄封装，旧调用方不受影响
+- mock 增加 `GET /api/streams` 与 `--empty-mcp`：本地即可验证「MCP 两级全空 → REST 兜底拿到 9 条」
+- 测试新增 4 个：REST 地址派生（三种写法）、REST 兜底拿流且带对鉴权头、全链路失败时 attempts 说清原因；
+  修正 `test_probe_uses_draft_without_persisting` 的打桩目标（`discover_streams_detailed`）
+  ——`test_mcp_client + test_patrol + test_patrol_config` 共 **48 全过**
+
 ### 修复：流清单为空——补 GRN 解析与 list_resource / describe_resource 降级链（真机联调）
 
 「测试连接」通过但流清单一条不出。自检发现两类缺口：

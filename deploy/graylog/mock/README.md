@@ -19,12 +19,16 @@ python deploy/graylog/mock/mock_graylog_mcp.py                 # 127.0.0.1:18080
 python deploy/graylog/mock/mock_graylog_mcp.py --port 9001
 python deploy/graylog/mock/mock_graylog_mcp.py --messages 30   # search 返回 30 条合成消息
 python deploy/graylog/mock/mock_graylog_mcp.py --grn           # 模拟真实 Graylog 的 GRN 包法
+python deploy/graylog/mock/mock_graylog_mcp.py --empty-mcp     # MCP 列流回空，验证 REST 兜底
 ```
 
 `--grn` 复现真实 Graylog 的另一种返回形态：`list_streams` 只回 `grn:graylog:stream:<id>`
 字符串列表（没有流对象），并额外提供 `list_resource(type=stream)` / `describe_resource(grn)`
 两个工具。用于验证平台的降级链路：GRN → 逐条 describe 补全 title / description。
-正常模式和 GRN 模式都应该让「测试连接」看到 9 条流。
+
+`--empty-mcp` 让 MCP 的 `list_streams` / `list_resource` 都回空，用于验证平台最后一级
+兜底——直接打 Graylog REST `GET /api/streams`（mock 同时提供了这个端点，返回同样 9 条流）。
+三种模式都应该让「测试连接」看到 9 条流；如果都看不到，页面的「为什么没拿到流」会列出每一步的失败原因。
 
 `--messages` 打开后，`search_messages` / `aggregate_messages` 会按固定种子生成消息：字段符合 [`docs/log-source-spec.md`](../../../docs/log-source-spec.md)，约 3% 故意不合规（`_schema_ok=false`），匿名访问按规范**移除 `username`** 而不是填空串——正好用来检查平台有没有把这些情况算错。
 
@@ -36,6 +40,8 @@ python deploy/graylog/mock/mock_graylog_mcp.py --grn           # 模拟真实 Gr
 | `list_fields` | 17 个规范字段（`ts` / `src_ip` / `ua_class` / `_schema_ok` …） |
 | `search_messages` | `--messages N` 时返回 N 条合成消息，否则空 |
 | `aggregate_messages` | 消息条数（跟随 `--messages`） |
+| `list_resource` / `describe_resource` | 仅 `--grn` 模式提供，返回 GRN 列表与单个流定义 |
+| `GET /api/streams` | 模拟 Graylog REST 流清单（`{"streams": [...], "total": 9}`），供平台 REST 兜底 |
 
 ## 接到平台上
 

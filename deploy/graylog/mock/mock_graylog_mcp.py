@@ -108,6 +108,7 @@ class MockHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     message_count = 0
     grn_mode = False
+    empty_mcp = False
 
     def log_message(self, *args):  # 静音，避免刷屏
         pass
@@ -124,10 +125,19 @@ class MockHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        """浏览器直接打开时给个人话，方便确认进程活着。"""
+        """REST 流清单 + 状态页。
+
+        ``/api/streams`` 模拟 Graylog REST API（平台在 MCP 取不到流时会退到这里）；
+        其它路径给一行运行状态，方便确认进程活着。
+        """
+        if self.path.rstrip("/").endswith("/api/streams"):
+            payload = {"streams": STREAMS, "total": len(STREAMS)}
+            self._json(payload)
+            return
         body = (
             "mock-graylog-mcp 正在运行。\n"
             f"POST 到此端点进行 MCP 调用（当前端点 {self.path}）。\n"
+            f"GET /api/streams 模拟 Graylog REST 流清单。\n"
             f"流 {len(STREAMS)} 条，合成消息 {self.message_count} 条/次查询。\n"
         ).encode("utf-8")
         self.send_response(200)
@@ -200,7 +210,9 @@ class MockHandler(BaseHTTPRequestHandler):
 
     def _call_tool(self, name: str, args: dict) -> dict:
         if name == "list_streams":
-            if MockHandler.grn_mode:
+            if MockHandler.empty_mcp:
+                payload = {"streams": []}
+            elif MockHandler.grn_mode:
                 # 模拟真实 Graylog 的 GRN 包法：只有 GRN 字符串，没有流对象
                 payload = {"resources": [f"grn:graylog:stream:{s['id']}" for s in STREAMS]}
             else:
@@ -211,7 +223,7 @@ class MockHandler(BaseHTTPRequestHandler):
             }
         if name == "list_resource":
             rtype = str((args or {}).get("type") or "")
-            if rtype != "stream":
+            if rtype != "stream" or MockHandler.empty_mcp:
                 return {"structuredContent": {"resources": []}}
             payload = {"resources": [f"grn:graylog:stream:{s['id']}" for s in STREAMS]}
             return {"structuredContent": payload}
@@ -256,14 +268,20 @@ def main() -> None:
                         help="模拟真实 Graylog 的 GRN 包法：list_streams 只回 "
                              "grn:graylog:stream:<id> 列表，需靠 list_resource / "
                              "describe_resource 兜底（用于验证平台的降级链路）")
+    parser.add_argument("--empty-mcp", action="store_true",
+                        help="让 MCP 的 list_streams / list_resource 都回空，用于验证平台"
+                             "退到 REST GET /api/streams 的兜底是否生效")
     args = parser.parse_args()
 
     MockHandler.grn_mode = args.grn
+    MockHandler.empty_mcp = args.empty_mcp
     MockHandler.message_count = max(args.messages, 0)
     server = ThreadingHTTPServer((args.host, args.port), MockHandler)
+    modes = " / ".join(m for m, on in (("GRN 包法", args.grn), ("MCP 空返回", args.empty_mcp)) if on)
     print(f"mock-graylog-mcp 已启动: http://{args.host}:{args.port}/mcp", flush=True)
     print(f"  流 {len(STREAMS)} 条 / 字段 {len(FIELDS)} 个 / 合成消息 {MockHandler.message_count} 条每次"
-          + (" / GRN 包法" if args.grn else ""), flush=True)
+          + (f" / {modes}" if modes else ""), flush=True)
+    print("  REST 兜底端点: GET /api/streams", flush=True)
     print("  接平台：数据源页 → Graylog 接入 → 上述地址 + 任意 token", flush=True)
     try:
         server.serve_forever()

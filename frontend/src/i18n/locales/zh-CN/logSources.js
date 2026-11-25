@@ -121,6 +121,8 @@ export default {
     dialogHint: '这些是 Graylog 上 MCP 能看到的全部流。平台只应填归一化流（norm-*），原始流（raw-*）保留给排错。',
     copy: '复制',
     copied: 'ID 已复制',
+    diagTitle: '为什么没拿到流？（排查详情）',
+    diagHint: '平台依次尝试了 MCP 列流、资源接口与 Graylog REST。看哪一步是红点：401/403 说明 Token 缺 Streams:read 权限；连接失败看地址与证书；下方原始返回可直接复制反馈。',
     col: {
       title: '流名称',
       id: 'Stream ID',

@@ -310,7 +310,8 @@ def test_discover_streams_degrades_on_mcp_error(monkeypatch):
             raise McpError("connect refused")
 
     monkeypatch.setattr(patrol, "build_client", lambda *a, **k: _Boom())
-    cfg = PatrolConfig(url="http://graylog.local")
+    # 端口 9 必然拒绝：REST 兜底会立刻失败，不拖慢测试
+    cfg = PatrolConfig(url="http://127.0.0.1:9/api/mcp", timeout=0.5)
     assert patrol.discover_streams(cfg=cfg) == []
 
 
@@ -379,5 +380,78 @@ def test_discover_streams_survives_list_resource_missing(monkeypatch):
 
     stub = _Missing()
     monkeypatch.setattr(patrol, "build_client", lambda *a, **k: stub)
-    assert patrol.discover_streams(cfg=PatrolConfig(url="http://graylog.local")) == []
+    cfg = PatrolConfig(url="http://127.0.0.1:9/api/mcp", timeout=0.5)
+    assert patrol.discover_streams(cfg=cfg) == []
     assert stub.calls == ["list_streams", "list_resource"]
+
+
+def test_rest_streams_url_derives_from_mcp_url():
+    """MCP 地址 → REST 流清单地址（兜底用），三种写法都要对。"""
+    assert patrol._rest_streams_url("https://graylog:9000/api/mcp") == "https://graylog:9000/api/streams"
+    assert patrol._rest_streams_url("https://graylog:9000/api/mcp/") == "https://graylog:9000/api/streams"
+    assert patrol._rest_streams_url("http://10.0.0.5:9000") == "http://10.0.0.5:9000/api/streams"
+
+
+def test_discover_streams_falls_back_to_rest(monkeypatch):
+    """MCP 工具全部不可用时，最后一级 REST /api/streams 必须能拿到流。"""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+
+    seen_auth: list[str] = []
+
+    class _Rest(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            seen_auth.append(self.headers.get("Authorization") or "")
+            body = json.dumps({"streams": [
+                {"id": "rest111", "title": "IPS 入侵防御", "description": "边界 IPS"},
+                {"id": "rest222", "title": "WAF access log", "description": ""},
+            ]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Rest)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    class _NoTools:
+        def call_tool(self, name, arguments=None):
+            from app.services.mcp_client import McpError
+            raise McpError("tool not found")
+
+    try:
+        cfg = PatrolConfig(url=f"http://127.0.0.1:{port}/api/mcp", token="abc123")
+        detail = patrol.discover_streams_detailed(_NoTools(), cfg=cfg)
+        streams = detail["streams"]
+        assert [s["id"] for s in streams] == ["rest111", "rest222"]
+        assert streams[0]["title"] == "IPS 入侵防御"
+        assert streams[0]["suggested"] == "IPS"
+        # 兜底也走同一套鉴权：Basic base64("<token>:token")
+        assert seen_auth and seen_auth[0].startswith("Basic ")
+        assert detail["attempts"][-1]["step"].startswith("REST")
+        assert detail["attempts"][-1]["ok"] is True
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_discover_streams_reports_why_empty(monkeypatch):
+    """全链路拿不到时，attempts 必须说清每一步为什么失败（页面直接展示）。"""
+    class _Boom:
+        def call_tool(self, name, arguments=None):
+            from app.services.mcp_client import McpError
+            raise McpError("HTTP 403 Forbidden")
+
+    cfg = PatrolConfig(url="http://127.0.0.1:9/api/mcp", token="wrong", timeout=0.5)
+    detail = patrol.discover_streams_detailed(_Boom(), cfg=cfg)
+
+    assert detail["streams"] == []
+    steps = [a["step"] for a in detail["attempts"]]
+    assert steps[:2] == ["MCP list_streams", "MCP list_resource(type=stream)"]
+    assert all(a["ok"] is False for a in detail["attempts"])
+    assert "403" in detail["attempts"][0]["detail"]

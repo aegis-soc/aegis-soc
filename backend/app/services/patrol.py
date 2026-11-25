@@ -20,6 +20,8 @@ from __future__ import annotations
 import json
 import logging
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -703,45 +705,71 @@ def _discover_via_grn(client: McpHttpClient) -> list[dict[str, Any]]:
     return _describe_grns(client, grns)
 
 
-def discover_streams(client: McpHttpClient | None = None,
-                     cfg: PatrolConfig | None = None, db=None) -> list[dict[str, Any]]:
-    """拿 Graylog 的流清单，用于把真实的 stream id 填进配置。
+def _snippet(payload: Any, limit: int = 600) -> str:
+    """把返回压成一段单行片段，供页面排错（超长截断）。"""
+    if payload is None:
+        return ""
+    if isinstance(payload, str):
+        text = payload
+    else:
+        try:
+            text = json.dumps(payload, ensure_ascii=False)
+        except (TypeError, ValueError):
+            text = str(payload)
+    return " ".join(text.split())[:limit]
 
-    三级尝试，任一有结果即返回：
 
-    1. ``list_streams``（工具名可配 ``stream_tool``）——流对象或 GRN 列表都认；
-    2. 结果为空时走 MCP 标准资源接口：``list_resource(type=stream)`` →
-       ``describe_resource`` 逐条补全（Token 需要 Streams:read，否则两级都空）；
-    3. 全部失败只记 warning 返回空，绝不影响巡检主链路。
+def _rest_streams_url(url: str) -> str:
+    """从 MCP 地址派生 Graylog REST 流清单地址。
+
+    ``https://graylog:9000/api/mcp`` → ``https://graylog:9000/api/streams``；
+    未带 ``/api/mcp`` 后缀时直接在末尾拼 ``/api/streams``。
     """
-    cfg = cfg or load_config(db)
-    cli = client or build_client(cfg)
+    base = str(url or "").strip().rstrip("/")
+    for suffix in ("/api/mcp", "/mcp"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+            break
+    return base.rstrip("/") + "/api/streams"
+
+
+def _discover_via_rest(cfg: PatrolConfig) -> tuple[list[dict[str, Any]], str]:
+    """最后一级兜底：直接打 Graylog REST ``GET /api/streams``。
+
+    MCP 的 ``list_streams`` / ``list_resource`` 都可能因版本、MCP 开关或权限拿不到
+    清单，但 REST API 一直存在，且鉴权与 MCP 完全同一套（Basic ``<token>:token``）。
+    返回 ``(流列表, 失败说明)``，成功时说明为空串。
+    """
+    url = _rest_streams_url(cfg.url)
+    headers = {"Accept": "application/json"}
+    headers.update(McpHttpClient(cfg.url, token=cfg.token,
+                                 timeout=cfg.timeout, auth=cfg.auth).auth_headers())
+    request = urllib.request.Request(url, headers=headers, method="GET")
     try:
-        payload = parse_tool_result(cli.call_tool(cfg.stream_tool, {}))
-    except McpError as exc:
-        logger.warning("读取 Graylog 流清单失败：%s", exc)
-        payload = None
-    items = _find_stream_list(payload)
-    if not items:
-        # 兜底：按消息语义再试一次（个别 MCP server 会把流当成消息列表返回）
-        items = extract_records(payload)
-    if items and all(
-        isinstance(it, dict)
-        and not (it.get("id") or it.get("stream_id") or it.get("title") or it.get("name"))
-        for it in items
-    ):
-        # GRN-only 清单：list_streams 只回了 GRN、没有任何标题信息。
-        # 先逐条 describe_resource 补全（真实 Graylog 的主流形态）；
-        # describe 全挂时保留原条目，id 从 GRN 解析，title 用 id 占位。
-        grns = [it["grn"] for it in items if isinstance(it, dict) and it.get("grn")]
-        enriched = _describe_grns(cli, grns) if grns else []
-        if enriched:
-            items = enriched
-    if not items:
-        # 兜底 2：MCP 标准资源接口 list_resource → describe_resource
-        items = _discover_via_grn(cli)
+        with urllib.request.urlopen(request, timeout=cfg.timeout) as response:
+            data = json.loads(response.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            detail = exc.read().decode("utf-8", errors="replace")[:200]
+        except Exception:      # 读错误体失败不影响主流程
+            pass
+        hint = "（需要 Streams:read 权限）" if exc.code in (401, 403) else ""
+        return [], f"HTTP {exc.code} {url}{hint} {detail}".strip()
+    except Exception as exc:   # 连接失败 / 证书 / 超时
+        return [], f"{type(exc).__name__}: {exc} ({url})"
+    items = data.get("streams") if isinstance(data, dict) else data
+    if not isinstance(items, list):
+        return [], f"返回结构不认识：{_snippet(data, 200)}"
+    return [x for x in items if isinstance(x, dict)], ""
+
+
+def _build_streams(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """把各种形态的流条目统一成 ``{id,title,description,suggested}``。"""
     streams: list[dict[str, Any]] = []
     for item in items:
+        if not isinstance(item, dict):
+            continue
         stream_id = str(item.get("id") or item.get("stream_id") or "").strip()
         if not stream_id:
             stream_id = _stream_id_from_grn(item.get("grn"))
@@ -762,6 +790,82 @@ def discover_streams(client: McpHttpClient | None = None,
     return streams
 
 
+def discover_streams_detailed(client: McpHttpClient | None = None,
+                              cfg: PatrolConfig | None = None,
+                              db=None) -> dict[str, Any]:
+    """拿流清单，并把每一级尝试的结果一并返回，供页面排错。
+
+    四级尝试（前面有结果就不再往下走）：
+
+    1. MCP ``list_streams``（工具名可配）——流对象 / GRN 列表都认；
+    2. 拿到的是 GRN-only 清单 → 逐条 ``describe_resource`` 补 title；
+    3. 仍为空 → MCP ``list_resource(type=stream)`` → 再 describe；
+    4. 仍为空 → Graylog REST ``GET /api/streams``（**不依赖 MCP**）。
+
+    返回 ``{"streams": [...], "attempts": [{step, ok, count, detail, raw}]}``。
+    任何一级失败都只记日志 + 写进 attempts，不影响巡检主链路。
+    """
+    cfg = cfg or load_config(db)
+    cli = client or build_client(cfg)
+    attempts: list[dict[str, Any]] = []
+    items: list[dict[str, Any]] = []
+
+    # ① MCP list_streams
+    try:
+        payload = parse_tool_result(cli.call_tool(cfg.stream_tool, {}))
+        found = _find_stream_list(payload) or extract_records(payload)
+        attempts.append({"step": f"MCP {cfg.stream_tool}", "ok": bool(found),
+                         "count": len(found), "detail": "", "raw": _snippet(payload)})
+        items = found
+    except McpError as exc:
+        logger.warning("读取 Graylog 流清单失败（%s）：%s", cfg.stream_tool, exc)
+        attempts.append({"step": f"MCP {cfg.stream_tool}", "ok": False,
+                         "count": 0, "detail": str(exc), "raw": ""})
+
+    # ② GRN-only 清单 → describe 补全
+    if items and all(
+        not (it.get("id") or it.get("stream_id") or it.get("title") or it.get("name"))
+        for it in items if isinstance(it, dict)
+    ):
+        grns = [it["grn"] for it in items if isinstance(it, dict) and it.get("grn")]
+        enriched = _describe_grns(cli, grns) if grns else []
+        attempts.append({"step": f"MCP describe_resource × {len(grns)}", "ok": bool(enriched),
+                         "count": len(enriched), "detail": "",
+                         "raw": _snippet([{k: v for k, v in e.items() if k != "grn"} for e in enriched[:3]])})
+        if enriched:
+            items = enriched
+
+    # ③ MCP 资源接口兜底
+    if not items:
+        try:
+            payload = parse_tool_result(cli.call_tool("list_resource", {"type": "stream"}))
+            grns = _collect_stream_grns(payload)
+            enriched = _describe_grns(cli, grns) if grns else []
+            attempts.append({"step": "MCP list_resource(type=stream)", "ok": bool(grns),
+                             "count": len(grns), "detail": "", "raw": _snippet(payload)})
+            if enriched:
+                items = enriched
+        except McpError as exc:
+            attempts.append({"step": "MCP list_resource(type=stream)", "ok": False,
+                             "count": 0, "detail": str(exc), "raw": ""})
+
+    # ④ REST 兜底（不依赖 MCP）
+    if not items:
+        rest_items, err = _discover_via_rest(cfg)
+        attempts.append({"step": "REST GET /api/streams", "ok": bool(rest_items),
+                         "count": len(rest_items), "detail": err,
+                         "raw": _snippet(rest_items[:3]) if rest_items else ""})
+        items = rest_items
+
+    return {"streams": _build_streams(items), "attempts": attempts}
+
+
+def discover_streams(client: McpHttpClient | None = None,
+                     cfg: PatrolConfig | None = None, db=None) -> list[dict[str, Any]]:
+    """拿 Graylog 的流清单（只返回流列表，排错信息见 :func:`discover_streams_detailed`）。"""
+    return discover_streams_detailed(client, cfg=cfg, db=db)["streams"]
+
+
 def _status_payload(cfg: PatrolConfig, client: McpHttpClient,
                     with_streams: bool, db=None) -> dict[str, Any]:
     """用给定配置做一次连通性自检（页面「测试连接」与「保存前试连」共用）。"""
@@ -770,7 +874,12 @@ def _status_payload(cfg: PatrolConfig, client: McpHttpClient,
     except McpError as exc:
         return {"configured": True, "error": str(exc), "url": mask_url(cfg.url),
                 "transport": client.transport, "auth": cfg.auth}
-    streams = discover_streams(client, cfg=cfg, db=db) if with_streams else []
+    streams: list[dict[str, Any]] = []
+    attempts: list[dict[str, Any]] = []
+    if with_streams:
+        detail = discover_streams_detailed(client, cfg=cfg, db=db)
+        streams = detail["streams"]
+        attempts = detail["attempts"]
     # 用发现的流反查配置：提示「配的 stream_id 在 Graylog 里不存在」
     known = {s["id"] for s in streams}
     current = [
@@ -782,7 +891,7 @@ def _status_payload(cfg: PatrolConfig, client: McpHttpClient,
         for s in cfg.streams
     ]
     return {"configured": True, "error": "", **info, "streams": streams,
-            "configured_streams": current, "source": cfg.source}
+            "streams_attempts": attempts, "configured_streams": current, "source": cfg.source}
 
 
 def mcp_status(db=None, with_streams: bool = True,
