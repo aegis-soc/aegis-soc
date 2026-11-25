@@ -58,7 +58,7 @@ class Settings:
     patrol_mode: str                  # dry-run（只出报告）/ assist（待人工确认）/ auto（自动封）
     patrol_mcp_url: str
     patrol_mcp_token: str
-    patrol_mcp_auth: str              # token（Graylog）/ bearer / basic / none / raw
+    patrol_mcp_auth: str              # token（Graylog 官方 Basic "<token>:token"）/ bearer / basic（现成 base64 串）/ none / raw
     patrol_mcp_tool: str
     patrol_mcp_stream_tool: str       # 列流的工具名，Graylog 为 list_streams
     patrol_mcp_args: str              # JSON 模板，留空则按工具 inputSchema 自动映射

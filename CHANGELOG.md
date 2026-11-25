@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+### 修复：MCP 鉴权改为 Graylog 官方 Token 认证（实测 401）
+
+真机联调发现：之前发的 `Authorization: Token <token>` 不是 Graylog 认的格式。按官方 REST API Token 约定修正——Basic auth 的 **username = API Token 字符串，password = 固定字面量 `token`**（不是占位符，不要换成真实密码），即 `Authorization: Basic base64("<token>:token")`，等价 `curl -u "<token>:token"`。
+
+- `mcp_client.py` `auth_headers()`：默认 `token` 模式改为按官方约定生成 Basic 头；`basic` 模式语义明确为「调用方已自行 base64 好的串，原样拼接」；`bearer` / `raw` / `none` 不变
+- **配置无需迁移**：`mcp_auth` 的存储值和默认值仍是 `token`，升级后语义自动变为官方格式——已在真机配置的环境只需更新代码重启
+- 两个易错点写进代码注释与文档：不要写 `user:<token>`；密码位不要换成真实密码
+- 前端「数据源 → Graylog 接入」下拉文案更正（中英双语）：「Graylog Token 认证（Basic，密码位固定填 token）」；下拉值不变，旧配置零迁移
+- `docs/graylog-patrol.md` 鉴权说明与 401 排错项同步更正；`deploy/graylog/mock/README.md` 同步
+- 测试：`test_mcp_client.py` 断言改为官方格式，并新增两条反向断言（不等于 `user:<token>`、密码位不等于其他字符串）；对照官方 Python 片段逐字节验证一致；`pytest tests/test_mcp_client.py` 7 通过（另 2 个失败为改动前已存在的测试库缺表问题，与本次无关）
+
 ### 新增：Graylog MCP 模拟服务（`deploy/graylog/mock/`）
 
 没有真 Graylog 时也要能把平台侧链路跑通。把此前只在临时目录里的验证脚本收进仓库，写成可复现的工具，而不是「上次那个脚本在哪」。

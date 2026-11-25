@@ -5,7 +5,10 @@
 
 真实 Graylog 的接入形态（按官方文档）：
 - 地址 ``https://<graylog-host>/api/mcp``；
-- 鉴权 ``Authorization: Token <API_TOKEN>``（**不是** Bearer）；
+- 鉴权复用 Graylog REST API 的 Token 认证约定：Basic auth 的
+  **username = API Token 字符串，password = 固定字面量 ``token``**
+  （不是占位符，不要替换成真实密码），即
+  ``Authorization: Basic base64("<token>:token")``，等价于 ``curl -u "<token>:token"``；
 - 默认开 ``System → Configurations → MCP`` 才有这个端点；
 - 权限完全继承该用户 RBAC，调用会写进 Graylog 审计日志。
 
@@ -22,6 +25,7 @@ MCP 抖动而中断或误封。
 """
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import threading
@@ -35,7 +39,8 @@ logger = logging.getLogger("aegis")
 # 先试较新的协议版本，服务端不认再退回上一个
 PROTOCOL_VERSIONS = ("2025-06-18", "2024-11-05")
 
-# 认证方式：token = Graylog 的 `Authorization: Token xxx`
+# 认证方式：token（默认）= Graylog 官方约定 Basic base64("<token>:token")；
+# basic = 调用方已自行 base64 好的串，原样拼在 Basic 后
 AUTH_SCHEMES = ("token", "bearer", "basic", "none", "raw")
 
 
@@ -229,7 +234,12 @@ class McpHttpClient:
 
     # ---------------------------------------------------------------- 传输
     def auth_headers(self) -> dict[str, str]:
-        """按配置生成鉴权头；Graylog 用 ``Token`` 前缀，其它平台可切 bearer。"""
+        """按配置生成鉴权头。
+
+        ``token``（默认）走 Graylog 官方约定：Basic 的 username 是 API Token
+        字符串、password 是固定字面量 ``token``——两个易错点：不要写成
+        ``user:<token>``；不要把 ``token`` 换成真实密码。
+        """
         if not self.token:
             return {}
         if self.auth in ("none", "off", "no", "false"):
@@ -237,10 +247,13 @@ class McpHttpClient:
         if self.auth in ("bearer", "oauth", "jwt"):
             return {"Authorization": f"Bearer {self.token}"}
         if self.auth == "basic":
+            # token 已是现成的 base64("user:pass")，原样使用
             return {"Authorization": f"Basic {self.token}"}
         if self.auth == "raw":
             return {"Authorization": self.token}
-        return {"Authorization": f"Token {self.token}"}
+        # token（默认）：Graylog REST API Token 认证，curl 等价 -u "<token>:token"
+        encoded = base64.b64encode(f"{self.token}:token".encode("utf-8")).decode("ascii")
+        return {"Authorization": f"Basic {encoded}"}
 
     def _headers(self, *, notify: bool = False) -> dict[str, str]:
         headers = {

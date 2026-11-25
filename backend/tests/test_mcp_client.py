@@ -1,13 +1,15 @@
-"""MCP 客户端测试：真实 Graylog 接入形态（Token 鉴权 + SSE 传输）。
+"""MCP 客户端测试：真实 Graylog 接入形态（官方 Token 认证 + SSE 传输）。
 
 覆盖四件事：
-1. ``Authorization: Token <token>`` 确实发出去了（Graylog 只认这个前缀）；
+1. Graylog 官方 Token 认证确实发对了：``Authorization: Basic base64("<token>:token")``
+   （username=API Token，password=固定字面 ``token``，不是 ``user:<token>``）；
 2. Streamable HTTP 下 JSON 响应能正确解析；
 3. 服务端只支持旧版 HTTP+SSE 时能自动降级（POST 被 405 拒绝 → GET 取 endpoint → 收回响应）；
 4. 参数按工具 inputSchema 自动映射，只传服务端声明过的字段。
 """
 from __future__ import annotations
 
+import base64
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -177,6 +179,11 @@ def _header(entry: tuple, name: str) -> str:
 
 
 # ---------------------------------------------------------------- 鉴权
+def _basic(user: str, password: str = "token") -> str:
+    """Graylog 官方约定：Basic 的 username=API Token，password=固定字面 token。"""
+    return "Basic " + base64.b64encode(f"{user}:{password}".encode("utf-8")).decode("ascii")
+
+
 def test_graylog_token_auth_header(start_server):
     server = start_server("json")
     client = McpHttpClient(f"{server.base}/api/mcp", token="abc123def456789", timeout=5)
@@ -186,7 +193,10 @@ def test_graylog_token_auth_header(start_server):
     assert info["serverInfo"]["name"] == "fake-graylog-mcp"
     assert client.transport == "streamable-http"
     first_post = next(s for s in server.seen if s[0] == "POST")
-    assert _header(first_post, "Authorization") == "Token abc123def456789"
+    assert _header(first_post, "Authorization") == _basic("abc123def456789")
+    # 密码位必须是固定字面量 token，不是真实密码、不是空串
+    assert _header(first_post, "Authorization") != _basic("abc123def456789", "other")
+    assert _header(first_post, "Authorization") != _basic("user", "abc123def456789")
 
 
 def test_bearer_scheme_is_configurable(start_server):
@@ -227,7 +237,7 @@ def test_falls_back_to_sse_when_post_rejected(start_server):
     assert data["messages"][0]["_id"] == "m1"
     # 降级后 GET 必须带着同一个 token
     first_get = next(s for s in server.seen if s[0] == "GET")
-    assert _header(first_get, "Authorization") == "Token t"
+    assert _header(first_get, "Authorization") == _basic("t")
 
 
 # ---------------------------------------------------------------- 参数映射

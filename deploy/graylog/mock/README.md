@@ -39,7 +39,7 @@ python deploy/graylog/mock/mock_graylog_mcp.py --messages 30   # search 返回 3
 |---|---|
 | MCP 地址 | `http://127.0.0.1:18080/mcp` |
 | Token | 任意，如 `mock-token` |
-| 鉴权方式 | `token`（会发 `Authorization: Token <token>`） |
+| 鉴权方式 | `token`（发 `Authorization: Basic base64("<token>:token")`，Graylog 官方约定；mock 本身不校验，随便填） |
 
 保存后点「测试连接」，应回 `server=mock-graylog-mcp 7.1.0` 与 9 条流；再打开「Graylog 流清单」核对下拉是否可搜索。
 

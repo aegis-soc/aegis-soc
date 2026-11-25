@@ -112,7 +112,7 @@ PATROL_REPEAT_HOURS=24
 
 | 项 | 实现 |
 |---|---|
-| 鉴权 | `Authorization: Token <token>`（`PATROL_MCP_AUTH=token`）；换平台可改 `bearer`/`basic`/`raw` |
+| 鉴权 | `Authorization: Basic base64("<token>:token")`（官方约定：**username = API Token 字符串，password = 固定字面 `token`**，等价 `curl -u "<token>:token"`；`PATROL_MCP_AUTH=token`）；换平台可改 `bearer`/`basic`/`raw` |
 | 传输 | 先走 Streamable HTTP；若 POST 被 404/405/406 拒绝，自动降级为旧版 HTTP+SSE（GET 拿 `endpoint` → POST，响应从事件流按 `id` 收回） |
 | 工具 | `search_messages` 取日志；`list_streams` 取流清单；其它工具（`list_inputs`/`list_events`/`list_pipelines`）只在连通性弹窗里展示 |
 | 参数 | 默认按 `inputSchema` 自动映射，Graylog 改参数名不用改代码 |
@@ -177,7 +177,7 @@ Beat 固定每分钟唤醒一次，真正的间隔由任务内部按「距上轮
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| `MCP HTTP 401 Unauthorized` | token 错、或用了 Bearer 前缀 | Graylog 只认 `Authorization: Token xxx`，确认 `PATROL_MCP_AUTH=token` |
+| `MCP HTTP 401 Unauthorized` | token 错，或鉴权格式不对 | Graylog 只认 `Basic base64("<token>:token")`——username 放 API Token，密码位是**固定字面 `token`**，别填真实密码、别写 `user:<token>`；确认 `PATROL_MCP_AUTH=token` |
 | `MCP HTTP 404` | 端点写错，或 Graylog 没开 MCP 开关 | 端点是 `/api/mcp`（不是 `/api/mcp/` 或 `/mcp`），并确认 `Enable MCP` 已保存 |
 | `MCP HTTP 403` | 该用户没有对应 stream 的读权限 | 给账号加 stream 读权限，或换只读管理员账号 |
 | 传输显示 `sse` | 服务端只实现了旧版 SSE | 正常，客户端已自动降级；如长期使用可留意服务端升级 |
