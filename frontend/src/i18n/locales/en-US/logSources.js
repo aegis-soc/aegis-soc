@@ -98,6 +98,7 @@ export default {
     fetched: 'With stream filter',
     control: 'Without filter',
     args: 'Arguments actually sent',
+    schema: 'Parameters this tool declares (inputSchema)',
     raw: 'Raw response (truncated to 1200 chars)',
     again: 'Probe again',
     emptyRaw: '(empty response)',

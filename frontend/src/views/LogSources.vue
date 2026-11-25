@@ -367,6 +367,11 @@
           <h4 class="probe-title">{{ t('logSources.probe.args') }}</h4>
           <pre class="code-block">{{ pretty(probe.data.arguments) }}</pre>
 
+          <template v-if="probeSchema">
+            <h4 class="probe-title">{{ t('logSources.probe.schema') }}</h4>
+            <pre class="code-block">{{ probeSchema }}</pre>
+          </template>
+
           <h4 class="probe-title">{{ t('logSources.probe.raw') }}</h4>
           <pre class="code-block">{{ probe.data.raw || t('logSources.probe.emptyRaw') }}</pre>
         </template>
@@ -422,6 +427,11 @@ const mcpSaving = ref(false)
 // 「试取」：对单个源立即打一次 Graylog（不受巡检间隔约束、不落库），
 // 把实际发送的参数和服务端原始返回摆出来——「无数据」到底卡在哪一步一看就知道。
 const probe = reactive({ open: false, loading: false, row: null, label: '', data: null })
+const probeSchema = computed(() => {
+  const props = probe.data?.schema?.properties
+  if (!props || typeof props !== 'object') return ''
+  return Object.entries(props).map(([name, type]) => `${name}: ${type || 'any'}`).join('\n')
+})
 const probeHint = computed(() => {
   const d = probe.data
   if (!d || d.error) return ''

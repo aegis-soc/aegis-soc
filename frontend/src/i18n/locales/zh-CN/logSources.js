@@ -98,6 +98,7 @@ export default {
     fetched: '带流过滤',
     control: '不带过滤',
     args: '实际发送的参数',
+    schema: '该工具声明的参数（inputSchema）',
     raw: '服务端原始返回（截断 1200 字符）',
     again: '重新试取',
     emptyRaw: '（返回为空）',

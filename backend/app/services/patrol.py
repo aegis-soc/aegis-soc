@@ -125,6 +125,10 @@ ARG_ALIASES: dict[str, tuple[str, ...]] = {
     "from": ("from", "start", "start_time", "from_time", "since", "timerange_start"),
     "to": ("to", "end", "end_time", "to_time", "until", "timerange_end"),
     "limit": ("limit", "size", "per_page", "page_size", "count", "max_results"),
+    # 有些实现（含 Graylog 风格）用「过去多少秒」代替绝对时间戳：
+    # 只声明 range/interval 时，发绝对时间戳会被忽略，窗口就悄悄变成服务端默认值。
+    "range": ("range", "interval", "time_range", "time_range_seconds",
+              "last_seconds", "seconds", "last"),
 }
 
 
@@ -144,8 +148,10 @@ def map_arguments(schema: dict[str, Any] | None, *, stream_id: str, query: str,
         "from": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "to": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "limit": limit,
+        "range": max(1, int((end - start).total_seconds())),
     }
     arguments: dict[str, Any] = {}
+    absolute: set[str] = set()
     for role, aliases in ARG_ALIASES.items():
         name = next((a for a in aliases if a in properties), None)
         if name is None:
@@ -157,10 +163,22 @@ def map_arguments(schema: dict[str, Any] | None, *, stream_id: str, query: str,
         kind = declared.get("type") if isinstance(declared, dict) else None
         if role == "stream" and kind == "array":
             arguments[name] = [value]
-        elif role == "limit" and kind == "string":
+        elif role in ("limit", "range") and kind == "string":
             arguments[name] = str(value)
         else:
             arguments[name] = value
+        if role in ("from", "to"):
+            absolute.add(name)
+    # 同时给了绝对时间窗和「过去 N 秒」时，以绝对时间窗为准，避免两个窗口互相打架
+    if len(absolute) == 2:
+        for name in ARG_ALIASES["range"]:
+            arguments.pop(name, None)
+    # query 是必填项而配置为空时补 "*"（匹配全部）：
+    # 少传必填参数有些实现不报错、直接回空结果，最难排查。
+    if "query" in (schema.get("required") or []):
+        query_name = next((a for a in ARG_ALIASES["query"] if a in properties), None)
+        if query_name and not str(arguments.get(query_name) or "").strip():
+            arguments[query_name] = "*"
     return arguments or None
 
 
@@ -532,6 +550,33 @@ PROBE_SAMPLE_FIELDS = ("timestamp", "ts", "source", "src_ip", "dst_ip", "usernam
                        "action", "severity", "url", "status_code", "stream")
 
 
+def _raw_preview(payload: Any, limit: int = 1500) -> str:
+    """返回体摘要：顶层键、列表长度、首两条元素。
+
+    直接 dump 整个包会被字段表吃掉——Graylog 的 search 返回首项是 ``schema`` 数组，
+    每个字段一条，1200 字符全花在上面，真正想看的 ``messages`` / ``total`` 被截掉。
+    """
+    if isinstance(payload, dict):
+        brief: dict[str, Any] = {}
+        for key, value in payload.items():
+            if isinstance(value, list):
+                brief[key] = {"count": len(value), "first": value[:2]}
+            elif isinstance(value, dict):
+                brief[key] = {"keys": list(value)[:12]}
+            else:
+                brief[key] = value
+        try:
+            return json.dumps(brief, ensure_ascii=False)[:limit]
+        except (TypeError, ValueError):
+            return str(brief)[:limit]
+    if isinstance(payload, str):
+        return payload[:limit]
+    try:
+        return json.dumps(payload, ensure_ascii=False)[:limit]
+    except (TypeError, ValueError):
+        return str(payload)[:limit]
+
+
 def probe_stream(stream: dict[str, Any], *, cfg: PatrolConfig | None = None, db=None,
                  minutes: int = PROBE_WINDOW_MINUTES, limit: int = 20) -> dict[str, Any]:
     """对单个源跑一次真实取数，把「发了什么参数、服务端回了什么」原样带出来。
@@ -567,30 +612,26 @@ def probe_stream(stream: dict[str, Any], *, cfg: PatrolConfig | None = None, db=
             "required": [str(x) for x in (schema.get("required") or [])],
         }
 
-    def _run(stream_id: str) -> tuple[int, str, list[dict[str, Any]], str, dict[str, Any] | None]:
+    def _run(stream_id: str) -> tuple[list[dict[str, Any]], str, dict[str, Any], str]:
         probe = dict(stream)
         probe["stream_id"] = stream_id
         args = build_search_arguments(client, probe, start, end, limit, cfg=cfg, schema=schema)
         try:
             payload = parse_tool_result(client.call_tool(cfg.tool, args or {}))
         except McpError as exc:
-            return 0, "", [], str(exc)[:300], args
-        records = extract_records(payload)
-        try:
-            raw = json.dumps(payload, ensure_ascii=False)[:1200]
-        except (TypeError, ValueError):
-            raw = str(payload)[:1200]
-        return len(records), raw, records, "", args
+            return [], "", args or {}, str(exc)[:300]
+        return extract_records(payload), _raw_preview(payload), args or {}, ""
 
-    fetched, raw, records, error, args = _run(str(stream.get("stream_id") or ""))
-    out.update({"fetched": fetched, "raw": raw, "error": error, "arguments": args or {}})
+    records, raw, args, error = _run(str(stream.get("stream_id") or ""))
+    out.update({"fetched": len(records), "raw": raw, "error": error, "arguments": args})
     out["sample"] = [
         {k: rec.get(k) for k in PROBE_SAMPLE_FIELDS if rec.get(k) not in (None, "")}
         for rec in records[:3]
     ]
     if not error:
-        c_fetched, _, _, c_error, c_args = _run("")
-        out["control"] = {"arguments": c_args or {}, "fetched": c_fetched, "error": c_error}
+        c_records, c_raw, c_args, c_error = _run("")
+        out["control"] = {"arguments": c_args, "fetched": len(c_records),
+                          "error": c_error, "raw": c_raw}
     return out
 
 
