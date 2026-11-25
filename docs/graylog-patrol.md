@@ -113,6 +113,8 @@ PATROL_REPEAT_HOURS=24
 | 项 | 实现 |
 |---|---|
 | 鉴权 | `Authorization: Basic base64("<token>:token")`（官方约定：**username = API Token 字符串，password = 固定字面 `token`**，等价 `curl -u "<token>:token"`；`PATROL_MCP_AUTH=token`）；换平台可改 `bearer`/`basic`/`raw` |
+| 权限前提 | API Token 所属用户需 **Streams:read**（列流）与消息检索权限——否则「测试连接」通过但流清单为空 |
+| 流清单 | 优先 `list_streams`；返回 GRN 列表（`grn:graylog:stream:<id>`）或为空时自动降级 `list_resource(type=stream)` → 逐条 `describe_resource` 补全 title |
 | 传输 | 先走 Streamable HTTP；若 POST 被 404/405/406 拒绝，自动降级为旧版 HTTP+SSE（GET 拿 `endpoint` → POST，响应从事件流按 `id` 收回） |
 | 工具 | `search_messages` 取日志；`list_streams` 取流清单；其它工具（`list_inputs`/`list_events`/`list_pipelines`）只在连通性弹窗里展示 |
 | 参数 | 默认按 `inputSchema` 自动映射，Graylog 改参数名不用改代码 |

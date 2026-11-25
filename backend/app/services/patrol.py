@@ -588,13 +588,52 @@ STREAM_HINTS: dict[str, tuple[str, ...]] = {
 }
 
 
+# GRN = Graylog Resource Name，流资源的形如 `grn:graylog:stream:<stream_id>`
+_GRN_PREFIX = "grn:graylog:stream:"
+_GRN_LIMIT = 50              # describe_resource 逐条补全的上限，防止流过多拖垮测试连接
+
+
+def _stream_id_from_grn(grn: str) -> str:
+    """从 `grn:graylog:stream:<id>` 里取 stream id；非流 GRN 返回空串。"""
+    grn = str(grn or "").strip()
+    return grn.rsplit(":", 1)[-1] if grn.startswith(_GRN_PREFIX) else ""
+
+
+def _collect_stream_grns(payload: Any, _depth: int = 0) -> list[str]:
+    """在任意嵌套结构里收集 ``grn:graylog:stream:...`` 字符串。
+
+    ``list_resource(type=stream)`` 与部分 ``list_streams`` 包法返回的是 GRN
+    列表而不是流对象，此时 id 只能从 GRN 里解析。
+    """
+    if payload is None or _depth > 4:
+        return []
+    if isinstance(payload, str):
+        if payload.strip().startswith(_GRN_PREFIX):
+            return [payload.strip()]
+        try:
+            return _collect_stream_grns(json.loads(payload), _depth + 1)
+        except json.JSONDecodeError:
+            return []
+    if isinstance(payload, list):
+        out: list[str] = []
+        for item in payload:
+            out.extend(_collect_stream_grns(item, _depth + 1))
+        return out
+    if isinstance(payload, dict):
+        out = []
+        for value in payload.values():
+            out.extend(_collect_stream_grns(value, _depth + 1))
+        return out
+    return []
+
+
 def _find_stream_list(payload: Any, _depth: int = 0) -> list[dict[str, Any]]:
     """在任意嵌套结构里找出「流清单」。
 
     ``extract_records`` 是按消息语义写的（认 messages/data/records…），不认
     ``streams`` 这个键，所以 ``{"data": {"streams": [...]}}`` 这类包法会漏。
-    这里改成结构无关的找法：递归找「元素带 id/stream_id 的 dict 列表」，
-    Graylog 无论怎么包都能捞出来。
+    这里改成结构无关的找法：递归找「元素带 id/stream_id/grn 的 dict 列表」，
+    以及「GRN 字符串列表」（真实 Graylog 的一种返回形态），怎么包都能捞出来。
     """
     if payload is None or _depth > 4:
         return []
@@ -604,9 +643,12 @@ def _find_stream_list(payload: Any, _depth: int = 0) -> list[dict[str, Any]]:
         except json.JSONDecodeError:
             return []
     if isinstance(payload, list):
-        hits = [x for x in payload if isinstance(x, dict) and (x.get("id") or x.get("stream_id"))]
-        if hits:
-            return hits
+        hits = [x for x in payload
+                if isinstance(x, dict) and (x.get("id") or x.get("stream_id") or x.get("grn"))]
+        grn_items = [{"grn": s} for s in payload
+                     if isinstance(s, str) and _stream_id_from_grn(s)]
+        if hits or grn_items:
+            return hits + grn_items
         for item in payload:
             found = _find_stream_list(item, _depth + 1)
             if found:
@@ -614,40 +656,95 @@ def _find_stream_list(payload: Any, _depth: int = 0) -> list[dict[str, Any]]:
         return []
     if isinstance(payload, dict):
         # 先看已知包法，再看自身是不是单个流对象
-        for key in ("streams", "data", "result", "items", "records"):
+        for key in ("streams", "data", "result", "items", "records", "resources"):
             if key in payload:
                 found = _find_stream_list(payload[key], _depth + 1)
                 if found:
                     return found
-        if payload.get("id") or payload.get("stream_id"):
+        if payload.get("id") or payload.get("stream_id") or payload.get("grn"):
             return [payload]
     return []
 
 
+def _describe_grns(client: McpHttpClient, grns: list[str]) -> list[dict[str, Any]]:
+    """逐个 ``describe_resource(grn)`` 补全流定义；单条失败只影响该条。"""
+    items: list[dict[str, Any]] = []
+    for grn in grns[:_GRN_LIMIT]:
+        entry: dict[str, Any] = {"grn": grn}
+        try:
+            desc = parse_tool_result(client.call_tool("describe_resource", {"grn": grn}))
+            if isinstance(desc, dict):
+                if desc.get("id"):
+                    entry["id"] = str(desc["id"])
+                entry["title"] = str(desc.get("title") or "")
+                entry["description"] = str(desc.get("description") or "")
+        except McpError as exc:
+            logger.debug("describe_resource(%s) 失败：%s", grn, exc)
+        items.append(entry)
+    return items
+
+
+def _discover_via_grn(client: McpHttpClient) -> list[dict[str, Any]]:
+    """``list_streams`` 拿不到时的兜底：MCP 标准资源接口。
+
+    ``list_resource(type=stream)`` 返回 GRN 列表（``grn:graylog:stream:<id>``），
+    再逐个 ``describe_resource(grn)`` 补 title / description 等完整定义。
+    上限 :data:`_GRN_LIMIT` 条；工具不存在（老版本服务端）或单条失败都只记日志。
+    """
+    try:
+        payload = parse_tool_result(client.call_tool("list_resource", {"type": "stream"}))
+    except McpError as exc:
+        logger.warning("list_resource 拿流清单失败：%s", exc)
+        return []
+    grns = _collect_stream_grns(payload)
+    if not grns:
+        return []
+    logger.info("list_streams 为空，经 list_resource 拿到 %d 条流 GRN", len(grns))
+    return _describe_grns(client, grns)
+
+
 def discover_streams(client: McpHttpClient | None = None,
                      cfg: PatrolConfig | None = None, db=None) -> list[dict[str, Any]]:
-    """调 ``list_streams`` 拿 Graylog 的流清单，用于把真实的 stream id 填进配置。"""
+    """拿 Graylog 的流清单，用于把真实的 stream id 填进配置。
+
+    三级尝试，任一有结果即返回：
+
+    1. ``list_streams``（工具名可配 ``stream_tool``）——流对象或 GRN 列表都认；
+    2. 结果为空时走 MCP 标准资源接口：``list_resource(type=stream)`` →
+       ``describe_resource`` 逐条补全（Token 需要 Streams:read，否则两级都空）；
+    3. 全部失败只记 warning 返回空，绝不影响巡检主链路。
+    """
     cfg = cfg or load_config(db)
     cli = client or build_client(cfg)
     try:
         payload = parse_tool_result(cli.call_tool(cfg.stream_tool, {}))
     except McpError as exc:
         logger.warning("读取 Graylog 流清单失败：%s", exc)
-        return []
+        payload = None
     items = _find_stream_list(payload)
     if not items:
         # 兜底：按消息语义再试一次（个别 MCP server 会把流当成消息列表返回）
         items = extract_records(payload)
-    if not items and isinstance(payload, dict):
-        # Graylog 的 list_streams 常见包法：{"streams": [{id, title, ...}]}
-        nested = payload.get("streams")
-        if isinstance(nested, list):
-            items = [x for x in nested if isinstance(x, dict)]
-        elif payload.get("id") or payload.get("stream_id"):
-            items = [payload]
+    if items and all(
+        isinstance(it, dict)
+        and not (it.get("id") or it.get("stream_id") or it.get("title") or it.get("name"))
+        for it in items
+    ):
+        # GRN-only 清单：list_streams 只回了 GRN、没有任何标题信息。
+        # 先逐条 describe_resource 补全（真实 Graylog 的主流形态）；
+        # describe 全挂时保留原条目，id 从 GRN 解析，title 用 id 占位。
+        grns = [it["grn"] for it in items if isinstance(it, dict) and it.get("grn")]
+        enriched = _describe_grns(cli, grns) if grns else []
+        if enriched:
+            items = enriched
+    if not items:
+        # 兜底 2：MCP 标准资源接口 list_resource → describe_resource
+        items = _discover_via_grn(cli)
     streams: list[dict[str, Any]] = []
     for item in items:
         stream_id = str(item.get("id") or item.get("stream_id") or "").strip()
+        if not stream_id:
+            stream_id = _stream_id_from_grn(item.get("grn"))
         if not stream_id:
             continue
         title = str(item.get("title") or item.get("name") or stream_id).strip()

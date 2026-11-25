@@ -4,6 +4,28 @@
 
 ## [Unreleased]
 
+### 修复：流清单为空——补 GRN 解析与 list_resource / describe_resource 降级链（真机联调）
+
+「测试连接」通过但流清单一条不出。自检发现两类缺口：
+
+- **解析不认 GRN 包法**：真实 Graylog 的 `list_streams` 可能只回 `grn:graylog:stream:<id>`
+  字符串列表（没有流对象），旧解析只认「带 id 的 dict」，GRN 直接漏成空
+- **没有资源接口兜底**：官方 MCP 标准的 `list_resource(type=stream)` →
+  `describe_resource(grn)`（返回匹配规则/索引集等完整定义）此前完全没接
+
+修复后 `discover_streams` 三级尝试：`list_streams`（流对象与 GRN 列表都认）→
+GRN-only 清单逐条 `describe_resource` 补全 title/description → 仍空再走
+`list_resource(type=stream)` 拿 GRN 再 describe。describe 全挂时 id 从 GRN 解析、
+title 用 id 占位，不会再「一无所见」；上限 50 条，单条失败不影响其余。
+
+- **权限前提写进文档**：API Token 需要 **Streams:read**，否则两级都空——这是
+  「连接通过但清单为空」的另一个常见原因（`docs/graylog-patrol.md`）
+- mock 加 `--grn` 开关：本地即可复现 GRN 包法 + list_resource/describe_resource，
+  端到端验证降级链路（9 条流全部补出 title 与 suggested）
+- 测试 4 个新用例：GRN 列表解析（含非流 GRN 忽略）、describe 补全、两级皆不可用不抛异常、
+  list_streams 空走兜底；另修复 2 个历史失败用例（显式传 cfg，不再读未建表的测试库）
+  ——`pytest test_mcp_client + test_patrol + test_patrol_config` 共 **45 全过**
+
 ### 修复：MCP 鉴权改为 Graylog 官方 Token 认证（实测 401）
 
 真机联调发现：之前发的 `Authorization: Token <token>` 不是 Graylog 认的格式。按官方 REST API Token 约定修正——Basic auth 的 **username = API Token 字符串，password = 固定字面量 `token`**（不是占位符，不要换成真实密码），即 `Authorization: Basic base64("<token>:token")`，等价 `curl -u "<token>:token"`。

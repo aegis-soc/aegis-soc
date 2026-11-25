@@ -19,6 +19,7 @@ import pytest
 
 from app.services import patrol
 from app.services.mcp_client import McpHttpClient, mask_token, parse_tool_result
+from app.services.patrol_settings import PatrolConfig
 
 SEARCH_SCHEMA = {
     "type": "object",
@@ -294,7 +295,8 @@ def test_discover_streams_normalizes_and_suggests(monkeypatch):
     ]})
     monkeypatch.setattr(patrol, "build_client", lambda *a, **k: stub)
 
-    streams = patrol.discover_streams()
+    # 显式传 cfg，避免 discover_streams 内部去读 patrol_setting 表（测试库未建）
+    streams = patrol.discover_streams(cfg=PatrolConfig(url="http://graylog.local"))
 
     assert stub.calls == ["list_streams"]
     assert [s["id"] for s in streams] == ["aaa111", "bbb222", "ccc333"]
@@ -308,4 +310,74 @@ def test_discover_streams_degrades_on_mcp_error(monkeypatch):
             raise McpError("connect refused")
 
     monkeypatch.setattr(patrol, "build_client", lambda *a, **k: _Boom())
-    assert patrol.discover_streams() == []
+    cfg = PatrolConfig(url="http://graylog.local")
+    assert patrol.discover_streams(cfg=cfg) == []
+
+
+def test_discover_streams_parses_grn_list(monkeypatch):
+    """真实 Graylog 的一种包法：list_streams 只回 GRN 字符串列表（无标题）。
+
+    应逐条 describe_resource 补全 title；describe 不可用时退回「id 从 GRN 解析、
+    title 用 id 占位」，且不应触发 list_resource（清单本身已拿到）。
+    """
+    stub = _StreamStub({"resources": [
+        "grn:graylog:stream:aaa111",
+        "grn:graylog:stream:bbb222",
+        "grn:graylog:user:should-not-match",   # 非流 GRN 必须被忽略
+    ]})
+    monkeypatch.setattr(patrol, "build_client", lambda *a, **k: stub)
+
+    streams = patrol.discover_streams(cfg=PatrolConfig(url="http://graylog.local"))
+
+    assert stub.calls == ["list_streams", "describe_resource", "describe_resource"]
+    assert [s["id"] for s in streams] == ["aaa111", "bbb222"]
+    assert streams[0]["title"] == "aaa111"   # describe 拿不到 title，用 id 占位
+
+
+def test_discover_streams_falls_back_to_list_resource(monkeypatch):
+    """list_streams 拿不到东西时：list_resource(type=stream) → describe_resource 补全。"""
+    class _SeqStub:
+        def __init__(self, results):
+            self.results = list(results)
+            self.calls = []
+
+        def call_tool(self, name, arguments=None):
+            self.calls.append(name)
+            result = self.results.pop(0)
+            if isinstance(result, Exception):
+                raise result
+            return {"structuredContent": result}
+
+    stub = _SeqStub([
+        [],                                                  # list_streams：空
+        {"resources": ["grn:graylog:stream:aaa111",
+                       "grn:graylog:stream:bbb222"]},        # list_resource：GRN 列表
+        {"id": "aaa111", "title": "IPS 入侵防御", "description": "边界 IPS"},   # describe
+        {"id": "bbb222", "title": "norm-ztna"},              # describe（无描述）
+    ])
+    monkeypatch.setattr(patrol, "build_client", lambda *a, **k: stub)
+
+    streams = patrol.discover_streams(cfg=PatrolConfig(url="http://graylog.local"))
+
+    assert stub.calls == ["list_streams", "list_resource",
+                          "describe_resource", "describe_resource"]
+    assert [s["id"] for s in streams] == ["aaa111", "bbb222"]
+    assert [s["title"] for s in streams] == ["IPS 入侵防御", "norm-ztna"]
+    assert [s["suggested"] for s in streams] == ["IPS", "ZTNA"]
+
+
+def test_discover_streams_survives_list_resource_missing(monkeypatch):
+    """两级都不可用（老版本服务端没有资源接口）时：返回空且不抛异常。"""
+    class _Missing:
+        def __init__(self):
+            self.calls = []
+
+        def call_tool(self, name, arguments=None):
+            from app.services.mcp_client import McpError
+            self.calls.append(name)
+            raise McpError("tool not found: -32601")
+
+    stub = _Missing()
+    monkeypatch.setattr(patrol, "build_client", lambda *a, **k: stub)
+    assert patrol.discover_streams(cfg=PatrolConfig(url="http://graylog.local")) == []
+    assert stub.calls == ["list_streams", "list_resource"]

@@ -107,6 +107,7 @@ def build_messages(count: int, stream_id: str) -> list[dict]:
 class MockHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     message_count = 0
+    grn_mode = False
 
     def log_message(self, *args):  # 静音，避免刷屏
         pass
@@ -162,7 +163,7 @@ class MockHandler(BaseHTTPRequestHandler):
                 "serverInfo": {"name": "mock-graylog-mcp", "version": "7.1.0"},
             }
         elif method == "tools/list":
-            result = {"tools": [
+            tools = [
                 {"name": "list_streams", "description": "List Graylog streams",
                  "inputSchema": {"type": "object", "properties": {}}},
                 {"name": "list_fields", "description": "List message fields",
@@ -174,7 +175,17 @@ class MockHandler(BaseHTTPRequestHandler):
                 {"name": "aggregate_messages", "description": "Aggregate count",
                  "inputSchema": {"type": "object", "properties": {
                      "query": {"type": "string"}, "stream_id": {"type": "string"}}}},
-            ]}
+            ]
+            if MockHandler.grn_mode:
+                tools += [
+                    {"name": "list_resource", "description": "List resources by type",
+                     "inputSchema": {"type": "object", "properties": {
+                         "type": {"type": "string"}}}},
+                    {"name": "describe_resource", "description": "Describe a resource by GRN",
+                     "inputSchema": {"type": "object", "properties": {
+                         "grn": {"type": "string"}}}},
+                ]
+            result = {"tools": tools}
         elif method == "tools/call":
             params = req.get("params") or {}
             name = params.get("name")
@@ -189,7 +200,31 @@ class MockHandler(BaseHTTPRequestHandler):
 
     def _call_tool(self, name: str, args: dict) -> dict:
         if name == "list_streams":
-            payload = {"streams": STREAMS}
+            if MockHandler.grn_mode:
+                # 模拟真实 Graylog 的 GRN 包法：只有 GRN 字符串，没有流对象
+                payload = {"resources": [f"grn:graylog:stream:{s['id']}" for s in STREAMS]}
+            else:
+                payload = {"streams": STREAMS}
+            return {
+                "content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}],
+                "structuredContent": payload,
+            }
+        if name == "list_resource":
+            rtype = str((args or {}).get("type") or "")
+            if rtype != "stream":
+                return {"structuredContent": {"resources": []}}
+            payload = {"resources": [f"grn:graylog:stream:{s['id']}" for s in STREAMS]}
+            return {"structuredContent": payload}
+        if name == "describe_resource":
+            grn = str((args or {}).get("grn") or "")
+            sid = grn.rsplit(":", 1)[-1] if grn.startswith("grn:graylog:stream:") else ""
+            stream = next((s for s in STREAMS if s["id"] == sid), None)
+            if not stream:
+                return {"content": [{"type": "text", "text": f"unknown grn: {grn}"}],
+                        "isError": True}
+            payload = {"id": stream["id"], "grn": grn, "title": stream["title"],
+                       "description": stream["description"], "disabled": False,
+                       "index_set_id": "default-index-set"}
             return {
                 "content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}],
                 "structuredContent": payload,
@@ -217,12 +252,18 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=18080, help="监听端口，默认 18080")
     parser.add_argument("--messages", type=int, default=0,
                         help="search_messages 每次返回的合成消息条数，0 表示返回空")
+    parser.add_argument("--grn", action="store_true",
+                        help="模拟真实 Graylog 的 GRN 包法：list_streams 只回 "
+                             "grn:graylog:stream:<id> 列表，需靠 list_resource / "
+                             "describe_resource 兜底（用于验证平台的降级链路）")
     args = parser.parse_args()
 
+    MockHandler.grn_mode = args.grn
     MockHandler.message_count = max(args.messages, 0)
     server = ThreadingHTTPServer((args.host, args.port), MockHandler)
     print(f"mock-graylog-mcp 已启动: http://{args.host}:{args.port}/mcp", flush=True)
-    print(f"  流 {len(STREAMS)} 条 / 字段 {len(FIELDS)} 个 / 合成消息 {MockHandler.message_count} 条每次", flush=True)
+    print(f"  流 {len(STREAMS)} 条 / 字段 {len(FIELDS)} 个 / 合成消息 {MockHandler.message_count} 条每次"
+          + (" / GRN 包法" if args.grn else ""), flush=True)
     print("  接平台：数据源页 → Graylog 接入 → 上述地址 + 任意 token", flush=True)
     try:
         server.serve_forever()

@@ -18,7 +18,13 @@
 python deploy/graylog/mock/mock_graylog_mcp.py                 # 127.0.0.1:18080
 python deploy/graylog/mock/mock_graylog_mcp.py --port 9001
 python deploy/graylog/mock/mock_graylog_mcp.py --messages 30   # search 返回 30 条合成消息
+python deploy/graylog/mock/mock_graylog_mcp.py --grn           # 模拟真实 Graylog 的 GRN 包法
 ```
+
+`--grn` 复现真实 Graylog 的另一种返回形态：`list_streams` 只回 `grn:graylog:stream:<id>`
+字符串列表（没有流对象），并额外提供 `list_resource(type=stream)` / `describe_resource(grn)`
+两个工具。用于验证平台的降级链路：GRN → 逐条 describe 补全 title / description。
+正常模式和 GRN 模式都应该让「测试连接」看到 9 条流。
 
 `--messages` 打开后，`search_messages` / `aggregate_messages` 会按固定种子生成消息：字段符合 [`docs/log-source-spec.md`](../../../docs/log-source-spec.md)，约 3% 故意不合规（`_schema_ok=false`），匿名访问按规范**移除 `username`** 而不是填空串——正好用来检查平台有没有把这些情况算错。
 
