@@ -649,6 +649,10 @@ def _apply_field_mapping(records: list[dict[str, Any]],
     「设备用占位符表示缺失」（部分网关的习惯），不写入平台字段——否则会
     凭空多出叫 ``-`` 的用户和设备，匿名判断也失效；pipeline 清洗规则是
     根治手段，这里是未部署规则时的兜底。
+
+    ``ua_class`` 特殊：真机网关（2026-11-26 实测）给的是 ``ua_is_pc`` 布尔
+    而非词表单值，映射 ``ua_class → ua_is_pc`` 取回时按 true/false 换算成
+    词表 ``pc`` / ``other``——不猜 mobile（布尔只声明「是不是 PC」）。
     """
     mapping = stream.get("field_mapping") or {}
     if not mapping:
@@ -661,7 +665,14 @@ def _apply_field_mapping(records: list[dict[str, Any]],
                 continue
             if str(record[graylog_name]).strip() in {"", "-"}:
                 continue
-            record[platform_key] = record.pop(graylog_name)
+            value = record.pop(graylog_name)
+            if platform_key == "ua_class":
+                text = str(value).strip().lower()
+                if text in {"true", "1", "yes"}:
+                    value = "pc"
+                elif text in {"false", "0", "no"}:
+                    value = "other"
+            record[platform_key] = value
     return records
 
 

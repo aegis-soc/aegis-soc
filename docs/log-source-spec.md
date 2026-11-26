@@ -152,16 +152,26 @@ Graylog  ── 接入、解析、归一化、路由、留存      ← 厂商差
 | 入库 | 记录取回后反写回平台字段名，LBA / 巡检永远只见契约字段 |
 | 时间列 | `timestamp` 与 `source` 自动附带，不需要配置；`ts` 被映射到设备自己的时间列（如 `occurred_at`）时以映射为准 |
 | 占位符 | 映射值为 `-` / 空串时不写入平台字段（设备用 `-` 表示缺失是常见习惯，直接反写会凭空多出叫 `-` 的用户）；根治手段是 pipeline 清洗规则（`ztna.rules` stage 0），平台侧反写跳过是兜底 |
+| 布尔换算 | `ua_class` 映射到布尔列（如真机 `ua_is_pc`）时自动换词表：true→`pc`、false→`other`（布尔只声明「是不是 PC」，不猜 mobile） |
 | 不覆盖 | 服务端本就回了同名标准字段（如原生 `username`）时，不做映射改写 |
 
-现场示例（深信服 aTrust）：
+现场示例（零信任网关，2026-11-26 真机 Fields 面板实测）：
 
 ```
-required_fields: ts, username, display_name, src_ip
-field_mapping:   username → employee_id, display_name → employee_name
+真机字段：request_method / request_uri / request_user_agent / response_status
+          source_ip + src_ip（双份同值）/ timestamp / ua_is_pc(布尔)
+          employee_id(UUID) / employee_name(工号)——仅部分消息携带
+
+required_fields: ts, src_ip, url, status_code, ua_raw, ua_class, username, display_name
+field_mapping:   url → request_uri, status_code → response_status,
+                 ua_raw → request_user_agent, ua_class → ua_is_pc,
+                 username → employee_id, display_name → employee_name
 ```
 
 > employee_id 是唯一值（UUID）做 `username`；employee_name 是工号/姓名做 `display_name`。
+> employee_* 仅部分消息携带（匿名/资源访问类消息没有），缺失率如实呈现，属预期。
+> 平台内置默认映射即上表（`patrol_settings.ZTNA_DEFAULT_MAPPING`），配置里未显式写
+> field_mapping 的零信任流自动预填；显式清空 `{}` 不覆盖。
 
 ## 4. Graylog 侧落地规范
 
@@ -245,6 +255,13 @@ end
 | 长亭雷池 | `request_uri` | `url` | |
 | 长亭雷池 | `attack_type` | `threat_type` | |
 | 零信任网关（深信服 aTrust） | `ua_pc` / `ua_mobile` / `ua_feishu` | `ua_class` | 三布尔合一，优先级 feishu > mobile > pc |
+| 零信任网关（**真机实测** 2026-11-26） | `request_method` | `method` | |
+| 零信任网关（真机实测） | `request_uri` | `url` | query 串含 `?s_cache=...` 类缓存参数，按 R7 拆 `url_query` |
+| 零信任网关（真机实测） | `request_user_agent` | `ua_raw` | 完整 UA 文本，可派生 ua_browser / ua_os（真机样本：Firefox 141 / Windows） |
+| 零信任网关（真机实测） | `response_status` | `status_code` | |
+| 零信任网关（真机实测） | `src_ip` + `source_ip` | `src_ip` | 双份同值；src_ip 已在时不并第二份 |
+| 零信任网关（真机实测） | `ua_is_pc`（布尔） | `ua_class` | true→`pc`；false 不猜 mobile，交 ua_raw 文本兜底 |
+| 零信任网关（真机实测） | `employee_id` / `employee_name` | `username` / `display_name` | UUID 唯一值 / 工号；**仅部分消息携带**（匿名与资源访问类消息没有） |
 | 零信任网关 | `user_name` / `account` | `username` | 匿名时设备可能给 `anonymous` 字符串 —— **需在 Graylog 转成 null**，否则与真实账号混淆 |
 | 零信任网关 | `app` / `app_name` | `app_id` / `app_name` | 若网关只给名字，`app_id` 用名字的稳定哈希或直接复用名字，**上线前定死** |
 | 零信任网关 | `gateway` / `node` | `gateway_node` | |
@@ -267,7 +284,16 @@ end
     "query": "",
     "purpose": ["lba", "patrol"],
     "schema_version": "1.0",
-    "required_fields": ["ts", "src_ip", "url", "method", "status_code", "ua_raw", "ua_class"],
+    "required_fields": ["ts", "src_ip", "url", "method", "status_code", "ua_raw", "ua_class",
+                        "username", "display_name"],
+    "field_mapping": {
+      "url": "request_uri",
+      "status_code": "response_status",
+      "ua_raw": "request_user_agent",
+      "ua_class": "ua_is_pc",
+      "username": "employee_id",
+      "display_name": "employee_name"
+    },
     "enabled": true
   }
 ]

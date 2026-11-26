@@ -27,6 +27,30 @@ def test_defaults_come_from_env(client):
     assert [s["name"] for s in cfg.streams] == ["IPS", "WAF", "ZTNA"]
 
 
+def test_ztna_default_mapping_prefilled():
+    """零信任流未显式配映射时预填真机实测映射（2026-11-26 Fields 面板）。"""
+    streams = patrol_settings.normalize_streams([{"name": "ZTNA", "stream_id": "zzz"}])
+    ztna = streams[0]
+    assert ztna["source_code"] == "ztna"
+    assert "username" in ztna["required_fields"]          # employee_* 取数靠它
+    assert ztna["field_mapping"]["url"] == "request_uri"
+    assert ztna["field_mapping"]["status_code"] == "response_status"
+    assert ztna["field_mapping"]["ua_raw"] == "request_user_agent"
+    assert ztna["field_mapping"]["ua_class"] == "ua_is_pc"
+    assert ztna["field_mapping"]["username"] == "employee_id"
+    assert ztna["field_mapping"]["display_name"] == "employee_name"
+
+
+def test_ztna_explicit_empty_mapping_not_overwritten():
+    """显式清空 {} 视为用户意图，预填不覆盖；其他源不受预填影响。"""
+    streams = patrol_settings.normalize_streams([
+        {"name": "ZTNA", "stream_id": "zzz", "field_mapping": {}},
+        {"name": "IPS", "stream_id": "iii"},
+    ])
+    assert streams[0]["field_mapping"] == {}
+    assert streams[1]["field_mapping"] == {}
+
+
 def test_save_then_load_roundtrip(client):
     with SessionLocal() as db:
         saved = patrol_settings.save(db, {

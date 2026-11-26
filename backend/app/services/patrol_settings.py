@@ -30,6 +30,21 @@ AUTH_CHOICES = {"token", "bearer", "basic", "none", "raw"}
 MODES = {"dry-run", "assist", "auto"}
 TOKEN_MASK = "********"
 
+# 零信任流「真机实测」字段映射（2026-11-26 真机 Fields 面板）：
+#   request_method / request_uri / request_user_agent / response_status /
+#   source_ip + src_ip(双份同值) / timestamp / ua_is_pc(布尔)，
+#   employee_id(UUID) / employee_name(工号) 仅部分消息携带。
+# 配了这条映射后契约字段全部落位；norm 流（pipeline 已归一）不受影响——
+# 归一流里契约字段本就同名直传，映射不触发。
+ZTNA_DEFAULT_MAPPING: dict[str, str] = {
+    "url": "request_uri",
+    "status_code": "response_status",
+    "ua_raw": "request_user_agent",
+    "ua_class": "ua_is_pc",
+    "username": "employee_id",
+    "display_name": "employee_name",
+}
+
 DEFAULT_STREAMS: list[dict[str, Any]] = [
     {"name": "IPS", "label": "IPS 入侵防御", "stream_id": "", "query": "",
      "source_code": "ips", "purpose": ["patrol"], "schema_version": "1.0",
@@ -39,7 +54,9 @@ DEFAULT_STREAMS: list[dict[str, Any]] = [
      "required_fields": ["ts", "src_ip", "action", "severity", "url"], "enabled": True},
     {"name": "ZTNA", "label": "零信任接入", "stream_id": "", "query": "",
      "source_code": "ztna", "purpose": ["lba", "patrol"], "schema_version": "1.0",
-     "required_fields": ["ts", "src_ip", "url", "status_code", "ua_raw", "ua_class"],
+     "required_fields": ["ts", "src_ip", "url", "status_code", "ua_raw", "ua_class",
+                         "username", "display_name"],
+     "field_mapping": dict(ZTNA_DEFAULT_MAPPING),
      "enabled": True},
     {"name": "NTA", "label": "态势感知 / 全流量", "stream_id": "", "query": "",
      "source_code": "nta", "purpose": ["patrol"], "schema_version": "1.0",
@@ -56,7 +73,8 @@ SOURCE_CODES = {"ips", "waf", "ztna", "nta"}
 DEFAULT_REQUIRED = {
     "ips": ["ts", "src_ip", "action", "severity"],
     "waf": ["ts", "src_ip", "action", "severity", "url"],
-    "ztna": ["ts", "src_ip", "url", "status_code", "ua_raw", "ua_class"],
+    "ztna": ["ts", "src_ip", "url", "status_code", "ua_raw", "ua_class",
+             "username", "display_name"],
     "nta": ["ts", "src_ip"],
 }
 DEFAULT_PURPOSE = {"ztna": ["lba", "patrol"]}
@@ -141,6 +159,11 @@ def normalize_streams(raw: Any) -> list[dict[str, Any]]:
         required = _string_list(item.get("required_fields"))
         if not required:
             required = list(DEFAULT_REQUIRED.get(code, ["ts", "src_ip"]))
+        # 映射预填：配置里没写 field_mapping（老配置/新部署）时，给零信任流
+        # 预填真机实测映射；显式给 {} 视为「用户清空过」，不覆盖。
+        mapping_raw = item.get("field_mapping")
+        if mapping_raw is None and code == "ztna":
+            mapping_raw = dict(ZTNA_DEFAULT_MAPPING)
         streams.append({
             "name": str(item.get("name")).upper()[:16],
             "label": str(item.get("label") or item.get("name"))[:64],
@@ -150,7 +173,7 @@ def normalize_streams(raw: Any) -> list[dict[str, Any]]:
             "purpose": [p for p in purpose if p in {"lba", "patrol", "soar"}][:4] or ["patrol"],
             "schema_version": str(item.get("schema_version") or "1.0").strip()[:16],
             "required_fields": required,
-            "field_mapping": _field_mapping(item.get("field_mapping")),
+            "field_mapping": _field_mapping(mapping_raw),
             "enabled": bool(item.get("enabled", True)),
         })
     return streams or [dict(s) for s in DEFAULT_STREAMS]

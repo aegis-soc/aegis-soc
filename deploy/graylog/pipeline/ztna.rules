@@ -46,16 +46,43 @@ then
   rename_field("account", "username");
 end
 
-rule "ztna :: rename url"
+// 2026-11-26 真机实测字段名（request_* / response_* / source_ip 系列）：
+// 真实网关不叫 method/url/ua_raw/status_code，先改名再走后续规则。
+rule "ztna :: rename method (request_method)"
+when has_field("request_method") && !has_field("method")
+then
+  rename_field("request_method", "method");
+end
+
+rule "ztna :: rename url (request_uri)"
 when has_field("request_uri") && !has_field("url")
 then
   rename_field("request_uri", "url");
 end
 
-rule "ztna :: rename ua_raw"
+rule "ztna :: rename ua_raw (request_user_agent)"
+when has_field("request_user_agent") && !has_field("ua_raw")
+then
+  rename_field("request_user_agent", "ua_raw");
+end
+
+rule "ztna :: rename ua_raw (user_agent)"
 when has_field("user_agent") && !has_field("ua_raw")
 then
   rename_field("user_agent", "ua_raw");
+end
+
+rule "ztna :: rename status_code (response_status)"
+when has_field("response_status") && !has_field("status_code")
+then
+  rename_field("response_status", "status_code");
+end
+
+// 真机 src_ip / source_ip 双份同值：src_ip 已在时不并第二份
+rule "ztna :: rename src_ip (source_ip)"
+when has_field("source_ip") && !has_field("src_ip")
+then
+  rename_field("source_ip", "src_ip");
 end
 
 rule "ztna :: rename src_ip"
@@ -193,6 +220,16 @@ end
 rule "ztna :: ua_class pc"
 when has_field("ua_pc") && !has_field("ua_class")
   && (to_string($message.ua_pc) == "true" || to_string($message.ua_pc) == "1")
+then
+  set_field("ua_class", "pc");
+end
+
+// 真机实测（2026-11-26）：网关给的是 ua_is_pc 布尔，不是 ua_pc。
+// 只声明「是不是 PC」：true→pc；false 不猜 mobile（可能是平板/终端未识别），
+// 交给下面的 ua_raw 文本兜底判断。
+rule "ztna :: ua_class pc (ua_is_pc)"
+when has_field("ua_is_pc") && !has_field("ua_class")
+  && (to_string($message.ua_is_pc) == "true" || to_string($message.ua_is_pc) == "1")
 then
   set_field("ua_class", "pc");
 end

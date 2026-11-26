@@ -4,6 +4,31 @@
 
 ## [Unreleased]
 
+### 新增：零信任真机字段清单落地——默认映射预填 + ua_is_pc 布尔换算
+
+2026-11-26 真机 Fields 面板实测零信任流字段：`request_method` / `request_uri` /
+`request_user_agent` / `response_status` / `source_ip`+`src_ip`（双份同值）/
+`timestamp` / `ua_is_pc`（布尔）；`employee_id`（UUID）/ `employee_name`（工号）
+仅部分消息携带（匿名与资源访问类消息没有）。据此：
+
+- 内置零信任默认映射 `ZTNA_DEFAULT_MAPPING`（`url→request_uri`、`status_code→response_status`、
+  `ua_raw→request_user_agent`、`ua_class→ua_is_pc`、`username→employee_id`、
+  `display_name→employee_name`）：配置里未显式写 `field_mapping` 的零信任流自动预填，
+  显式清空 `{}` 不覆盖；`required_fields` 补 `username` / `display_name`（取数靠它们）
+- `ua_class` 映射到布尔列时自动换词表：true→`pc`、false→`other`（布尔只声明
+  「是不是 PC」，不猜 mobile；真机样本 Firefox 141 / Windows 可由 `ua_raw` 派生
+  ua_browser / ua_os，设备指纹三要素齐备）
+- `ztna.rules`：stage 0 新增真机字段改名规则（`request_method→method`、
+  `request_uri→url`、`request_user_agent→ua_raw`、`response_status→status_code`、
+  `source_ip→src_ip`）；stage 2 新增 `ua_is_pc` 布尔换算（true→`pc`，false 交
+  ua_raw 文本兜底）
+- spec §3.6 现场示例更新为完整真机映射，§5 厂商映射表补 7 行真机实测记录，
+  §6.1 配置示例同步
+- **LBA 影响面结论**：`app_id` 真机不存在 → 应用维度分析需另找字段或降级；
+  设备指纹（ua_class + ua_browser + ua_browser_ver）可由 `ua_is_pc` + `ua_raw`
+  完整支撑；employee_* 消息级缺失属预期，缺失率如实呈现
+- 273 测试全过
+
 ### 新增：数据源级字段映射——设备字段名与平台契约解耦（真机 employee_id/employee_name）
 
 真机确认：零信任网关给的是 `employee_id`（UUID，唯一）/ `employee_name`（工号），

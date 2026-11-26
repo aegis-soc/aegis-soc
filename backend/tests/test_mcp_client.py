@@ -371,6 +371,29 @@ def test_apply_field_mapping_skips_dash_placeholder():
     assert out[1]["display_name"] == "10096661"
 
 
+def test_apply_field_mapping_converts_bool_ua_class():
+    """真机 ua_is_pc 是布尔：映射到 ua_class 时换词表 pc/other，不猜 mobile。"""
+    records = [{"ua_is_pc": True}, {"ua_is_pc": False},
+               {"ua_is_pc": "true"}, {"ua_is_pc": "0"}]
+    out = patrol._apply_field_mapping(
+        records, {"field_mapping": {"ua_class": "ua_is_pc"}})
+    assert out[0]["ua_class"] == "pc"
+    assert out[1]["ua_class"] == "other"
+    assert out[2]["ua_class"] == "pc"
+    assert out[3]["ua_class"] == "other"
+
+
+def test_request_fields_real_ztna_stream_shape():
+    """真机零信任流（2026-11-26 Fields 面板实测）：契约字段 + 默认映射后的取数列。"""
+    from app.services.patrol_settings import ZTNA_DEFAULT_MAPPING
+    stream = {"required_fields": ["ts", "src_ip", "url", "status_code", "ua_raw",
+                                  "ua_class", "username", "display_name"],
+              "field_mapping": dict(ZTNA_DEFAULT_MAPPING)}
+    assert patrol._request_fields(stream) == [
+        "timestamp", "src_ip", "request_uri", "response_status",
+        "request_user_agent", "ua_is_pc", "employee_id", "employee_name", "source"]
+
+
 # ---------------------------------------------------------------- 列式返回
 def test_extract_records_parses_columnar_with_schema_prefix():
     """真机返回：schema 列定义 + datarows 行数组，列名带 "field: " 前缀。"""
