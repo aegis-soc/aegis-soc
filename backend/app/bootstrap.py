@@ -44,7 +44,7 @@ ROLES: list[dict[str, Any]] = [
         "permission_json": [
             "alert:*", "ioc:*", "whitelist:*", "device:*", "plugin:*",
             "policy:*", "task:*", "audit:read", "dashboard:read",
-            "inspection:read", "inspection:run", "chat:ask",
+            "inspection:read", "inspection:run", "lba:read", "chat:ask",
         ],
         "description": "日常告警处置、IOC 与策略管理",
     },
@@ -54,7 +54,7 @@ ROLES: list[dict[str, Any]] = [
         "permission_json": [
             "alert:read", "ioc:read", "whitelist:read", "device:read", "plugin:read",
             "policy:read", "task:read", "audit:read", "dashboard:read",
-            "inspection:read", "chat:ask",
+            "inspection:read", "lba:read", "chat:ask",
         ],
         "description": "仅查看，禁止任何写操作",
     },

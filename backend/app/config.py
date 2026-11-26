@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from urllib.parse import quote_plus
 
 
 def _get(key: str, default: str = "") -> str:
@@ -19,6 +20,28 @@ def _int(key: str, default: int) -> int:
         return int(_get(key, str(default)))
     except ValueError:
         return default
+
+
+def _database_url() -> str:
+    """连接串组装：显式 ``DATABASE_URL`` 优先；否则用 ``DB_*`` 分量拼，密码自动 URL 编码。
+
+    为什么需要分量化（2026-11-26 真机踩坑）：密码含 ``@ : / # ?`` 等字符时
+    （如 ``admin@123``），拼在 URL 里会截断解析——``@`` 是 user-info 与 host
+    的分隔符，``aegis:admin@123@mysql`` 会被解析成 host=123@mysql。分量化
+    让 .env 里写**原始密码**即可，编码由平台负责，用户不用手写 ``%40``。
+    """
+    explicit = _get("DATABASE_URL")
+    if explicit:
+        return explicit
+    password = _get("DB_PASSWORD")
+    if not password:
+        return "mysql+pymysql://aegis:change-me@127.0.0.1:3306/aegis_soc?charset=utf8mb4"
+    user = _get("DB_USER", "aegis")
+    host = _get("DB_HOST", "mysql")
+    port = _get("DB_PORT", "3306")
+    name = _get("DB_NAME", "aegis_soc")
+    return (f"mysql+pymysql://{quote_plus(user)}:{quote_plus(password)}"
+            f"@{host}:{port}/{name}?charset=utf8mb4")
 
 
 @dataclass(frozen=True)
@@ -79,10 +102,7 @@ class Settings:
             app_env=_get("APP_ENV", "production"),
             debug=_bool("DEBUG", False),
             log_level=_get("LOG_LEVEL", "INFO"),
-            database_url=_get(
-                "DATABASE_URL",
-                "mysql+pymysql://aegis:change-me@127.0.0.1:3306/aegis_soc?charset=utf8mb4",
-            ),
+            database_url=_database_url(),
             redis_url=_get("REDIS_URL", "redis://127.0.0.1:6379/0"),
             celery_broker_url=_get("CELERY_BROKER_URL", "redis://127.0.0.1:6379/1"),
             celery_result_backend=_get("CELERY_RESULT_BACKEND", "redis://127.0.0.1:6379/2"),

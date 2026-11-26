@@ -4,6 +4,28 @@
 
 ## [Unreleased]
 
+### 新增：LBA 登录行为分析后端（v1）——三个契约接口落地，行为分析页有真数据
+
+此前行为分析页只有前端（生产构建请求 `/lba/*` 直接 404），本次按
+`docs/lba-api.md` 契约实现后端，复用巡检 MCP 取数基建（列式解析、字段映射、
+真机字段全部现成），零新配置：
+
+- `GET /lba/login/overview`：24h 活跃用户 / 设备数 / 待处置异常 / 高危用户
+- `GET /lba/login/anomaly-users`：异常用户列表（风险降序 + 活跃度排序，分页）
+- `GET /lba/profile/user/{username}`：用户详情（时间线 ≤200 条倒序、设备指纹
+  sha1(username|ua_class|browser|ver)、IP 轨迹含 GeoIP 归属地）
+- 风险启发 v1：跨 IP≥5 / 跨国家≥2 / 401+403≥10 → high；跨 IP≥3 / 设备≥3 →
+  medium。**不依赖 status_code 判认证成败**（网关对失败也回 200，真机结论）
+- 事件引擎未落地：`pending_events` 恒 0、`risk_history` 恒空（契约字段保留，
+  口径写入 lba-api.md §5）
+- Redis 缓存：overview/列表 120s、详情 60s，避免刷新即打 Graylog
+- 新权限 `lba:read` 加进 operator/auditor 内置角色（bootstrap 增量同步，
+  老库重启自动补齐）；路由注册 `/api/v1/lba/*`
+- UA 派生与 pipeline 同口径（feishu/edge/chrome/firefox/safari + 主版本 + OS）；
+  匿名消息（username 缺失/-/anonymous）不进用户维度聚合
+- 287 测试全过（新增 10 个：UA 派生、设备指纹、风险阈值、三接口契约形状、
+  缓存命中、鉴权）
+
 ### 新增：零信任真机字段清单落地——默认映射预填 + ua_is_pc 布尔换算
 
 2026-11-26 真机 Fields 面板实测零信任流字段：`request_method` / `request_uri` /

@@ -93,3 +93,18 @@
 ## 4. Mock 开关
 
 `src/api/lba.js`：`import.meta.env.DEV && VITE_LBA_MOCK !== 'false'` 时走本地 mock（生产构建永远走真实接口，`VITE_LBA_MOCK=false` 可在 dev 强制关掉）。组件内不出现任何 mock 判断。
+
+## 5. v1 实现口径（2026-11-26 后端落地说明）
+
+后端按需从零信任流聚合（复用巡检 MCP 基建，单次最多回看 7 天 / 5000 条，
+Redis 缓存：overview/列表 120s、详情 60s）。lba-collector 落地前的降级口径：
+
+| 字段 | v1 行为 |
+|---|---|
+| `pending_events` | 恒 `0`（风险事件引擎未实现，契约字段保留） |
+| `risk_history` | 恒 `[]`（同上） |
+| `devices_total` | 7d 设备指纹去重数（无累计表，暂代替「累计」口径） |
+| `risk` | 启发式：7d 跨 IP ≥5 或跨国家 ≥2 或 24h 401/403 ≥10 → `high`；跨 IP ≥3 或设备 ≥3 → `medium`；否则 `low`。**网关对认证失败也回 200，status_code 不可靠，风险判定不依赖它** |
+| 匿名消息 | `username` 缺失/`-`/`anonymous` 的记录不进用户维度聚合 |
+| UA 派生 | `ua_class` 缺失时从 `ua_raw` 弱派生（feishu/mobile 关键字，否则 pc）；browser/主版本/OS 同 pipeline ztna.rules 口径 |
+| 设备指纹 | `sha1(username|ua_class|browser|browser_ver)`，spec §3.4 口径 |
