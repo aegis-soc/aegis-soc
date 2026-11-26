@@ -299,7 +299,7 @@ def test_map_arguments_uses_range_seconds_and_fields():
     assert args["streams"] == ["6a30a6ab"]
     assert args["limit"] == 20
     # ts 必须换成真机字段名 timestamp，否则请求的是一个不存在的列
-    assert args["fields"] == ["timestamp", "src_ip", "action"]
+    assert args["fields"] == ["timestamp", "src_ip", "action", "source"]
     assert "from" not in args and "to" not in args        # schema 没声明就不该发
     assert "query" not in args                            # 空查询不发
 
@@ -311,6 +311,64 @@ def test_map_arguments_omits_empty_fields():
     args = patrol.map_arguments(GRAYLOG_SCHEMA, stream_id="s1", query="", start=now,
                                 end=now, limit=5, fields=[])
     assert "fields" not in args       # 空数组会让服务端可能一列都不回
+
+
+# ---------------------------------------------------------------- 字段映射
+ZTNA_MAPPING = {"username": "employee_id", "display_name": "employee_name"}
+
+
+def test_request_fields_applies_mapping_and_forces_time_source():
+    """映射优先生效；timestamp/source 强制附带——漏时间列时巡检窗口静默失效。"""
+    stream = {"required_fields": ["ts", "username", "display_name"],
+              "field_mapping": dict(ZTNA_MAPPING)}
+    assert patrol._request_fields(stream) == ["timestamp", "employee_id", "employee_name", "source"]
+
+
+def test_request_fields_respects_custom_ts_mapping():
+    """ts 被映射到设备自己的时间列时，以映射为准，不再追加 timestamp。"""
+    stream = {"required_fields": ["ts", "src_ip"],
+              "field_mapping": {"ts": "occurred_at"}}
+    fields = patrol._request_fields(stream)
+    assert fields == ["occurred_at", "src_ip", "source"]
+    assert "timestamp" not in fields
+
+
+def test_request_fields_no_mapping_falls_back_to_builtin():
+    assert patrol._request_fields({"required_fields": ["ts", "src_ip"]}) == \
+        ["timestamp", "src_ip", "source"]
+
+
+def test_apply_field_mapping_rewrites_platform_names():
+    records = [{"employee_id": "emp_1", "employee_name": "张三", "src_ip": "1.1.1.1"},
+               {"employee_id": "emp_2", "src_ip": "2.2.2.2"}]   # 第二条没有 employee_name
+    stream = {"field_mapping": dict(ZTNA_MAPPING)}
+    out = patrol._apply_field_mapping(records, stream)
+    assert out[0] == {"username": "emp_1", "display_name": "张三", "src_ip": "1.1.1.1"}
+    assert "username" in out[1] and "display_name" not in out[1]   # 缺列不动，如实统计缺失
+
+
+def test_apply_field_mapping_never_overwrites_native_fields():
+    """服务端本就回了 username（标准字段）时，不做映射覆盖。"""
+    records = [{"username": "native", "employee_id": "emp_9"}]
+    out = patrol._apply_field_mapping(records, {"field_mapping": dict(ZTNA_MAPPING)})
+    assert out[0]["username"] == "native"
+    assert out[0]["employee_id"] == "emp_9"     # 原字段保留
+
+
+def test_apply_field_mapping_noop_without_mapping():
+    records = [{"employee_id": "x"}]
+    assert patrol._apply_field_mapping(records, {}) is records
+
+
+def test_apply_field_mapping_skips_dash_placeholder():
+    """设备用 '-' 占位表示缺失：不写入平台字段，否则会凭空多出叫 '-' 的用户。"""
+    records = [{"employee_id": "-", "employee_name": "-"},
+               {"employee_id": "emp_1", "employee_name": "10096661"}]
+    out = patrol._apply_field_mapping(records, {"field_mapping": dict(ZTNA_MAPPING)})
+    assert "username" not in out[0] and "display_name" not in out[0]
+    assert out[0]["employee_id"] == "-"          # 原始字段保留，缺不缺由统计如实呈现
+    assert out[1]["username"] == "emp_1"
+    assert out[1]["display_name"] == "10096661"
 
 
 # ---------------------------------------------------------------- 列式返回

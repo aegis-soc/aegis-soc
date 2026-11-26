@@ -70,6 +70,48 @@ then
   rename_field("app", "app_id");
 end
 
+// ------------------------------------------------------------
+// 清洗：部分网关用 "-" 占位表示「没有这个值」。平台契约是
+// 「缺失 = 字段不存在」（见 log-source-spec §3.4），占位符会污染
+// 匿名判断（凭空多出用户 "-"）和设备指纹（sha1("-"+...)）。
+// 对身份类字段逐个清；只清 "-" 与空串，不动真实值。
+// ------------------------------------------------------------
+rule "ztna :: 清洗占位符 username"
+when has_field("username") && to_string($message.username) == "-"
+then
+  remove_field("username");
+end
+
+rule "ztna :: 清洗占位符 user_name"
+when has_field("user_name") && to_string($message.user_name) == "-"
+then
+  remove_field("user_name");
+end
+
+rule "ztna :: 清洗占位符 account"
+when has_field("account") && to_string($message.account) == "-"
+then
+  remove_field("account");
+end
+
+rule "ztna :: 清洗占位符 employee_id"
+when has_field("employee_id") && to_string($message.employee_id) == "-"
+then
+  remove_field("employee_id");
+end
+
+rule "ztna :: 清洗占位符 employee_name"
+when has_field("employee_name") && to_string($message.employee_name) == "-"
+then
+  remove_field("employee_name");
+end
+
+rule "ztna :: 清洗占位符 ua_raw"
+when has_field("ua_raw") && to_string($message.ua_raw) == "-"
+then
+  remove_field("ua_raw");
+end
+
 rule "ztna :: split url_query"
 when has_field("url") && !has_field("url_query")
   && contains(to_string($message.url), "?")

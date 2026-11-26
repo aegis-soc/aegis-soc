@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+### 新增：数据源级字段映射——设备字段名与平台契约解耦（真机 employee_id/employee_name）
+
+真机确认：零信任网关给的是 `employee_id`（UUID，唯一）/ `employee_name`（工号），
+平台 LBA 消费 `username` / `display_name`。映射做成**数据源级配置**而非写死代码。
+
+- `patrol_setting.streams[].field_mapping`（方向=平台字段→Graylog 字段），数据源页
+  抽屉新增可视化映射编辑器（平台字段下拉 + Graylog 字段名输入，逐条增删）
+- 取数按映射名请求列；取回后反写回平台字段名，LBA/巡检永远只见契约字段
+- `timestamp` 与 `source` 强制附带（漏时间列时巡检窗口、24h 时间线、「最近活跃」
+  全部静默失效）；`ts` 被映射到设备自有时间列时以映射为准
+- 反写时跳过 `-` / 空串占位符——直接反写会凭空多出叫 `-` 的用户、匿名判断失效；
+  根治手段是 `ztna.rules` stage 0 新增的占位符清洗规则，平台侧跳过是兜底
+- spec §3.4 新增可选字段 `display_name`（员工显示名），§3.6 新增字段映射规范；
+  mock 合成消息带 `employee_name`/`employee_id`（匿名用 `-` 占位），端到端回归
+- 269 测试全过；前端构建通过、双语 key 对齐
+
 ### 修复：数据源「无数据」——真机返回是 `schema` + `datarows` 列式，参数名是 `range_seconds`
 
 真机试取给出了完整答案：平台只发出了 `{"streams": [...], "limit": 20}`，而 Graylog 实际返回

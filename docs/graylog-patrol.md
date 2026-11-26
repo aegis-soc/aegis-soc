@@ -118,7 +118,7 @@ PATROL_REPEAT_HOURS=24
 | 流清单 | 四级兜底：`list_streams` → GRN 逐条 `describe_resource` 补全 → `list_resource(type=stream)` → **Graylog REST `GET /api/streams`**（不依赖 MCP）；每级结果可在「Graylog 流清单」弹窗的「为什么没拿到流」里看到 |
 | 传输 | 先走 Streamable HTTP；若 POST 被 404/405/406 拒绝，自动降级为旧版 HTTP+SSE（GET 拿 `endpoint` → POST，响应从事件流按 `id` 收回） |
 | 工具 | `search_messages` 取日志；`list_streams` 取流清单；其它工具（`list_inputs`/`list_events`/`list_pipelines`）只在连通性弹窗里展示 |
-| 参数 | 默认按 `inputSchema` 自动映射，Graylog 改参数名不用改代码。真机 7.1 的形态是 `streams[] + range_seconds + limit + fields[]`：**时间窗用「过去多少秒」**，不指定列时只回 `source`/`timestamp` 两列，所以平台会按数据源的 `required_fields` 主动请求列（`ts` 换成真机字段名 `timestamp`）；带 `fields` 被拒时自动退回不指定列重试 |
+| 参数 | 默认按 `inputSchema` 自动映射，Graylog 改参数名不用改代码；设备字段名与平台契约对不上时，在数据源页配 **字段映射**（`field_mapping`，方向=平台字段→Graylog 字段），取数按映射名请求列、取回后反写回平台名，`timestamp`/`source` 自动附带（详见 log-source-spec §3.6）。真机 7.1 的形态是 `streams[] + range_seconds + limit + fields[]`：**时间窗用「过去多少秒」**，不指定列时只回 `source`/`timestamp` 两列，所以平台会按数据源的 `required_fields` 主动请求列（`ts` 换成真机字段名 `timestamp`）；带 `fields` 被拒时自动退回不指定列重试 |
 | 响应 | 兼容 `structuredContent`、`content[].text`（JSON 字符串）、JSON 与 SSE 两种传输体；消息体同时支持 `messages` 对象列表与 **`schema` + `datarows` 列式**（列定义 + 行数组，按列顺序还原成字段） |
 
 ### 页面上的「MCP 连通性」现在能看到什么

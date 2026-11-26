@@ -221,6 +221,31 @@
           <div class="form-hint">{{ t('logSources.form.requiredHint') }}</div>
         </el-form-item>
 
+        <el-form-item :label="t('logSources.form.fieldMapping')">
+          <div class="mapping-box">
+            <div v-for="(m, i) in form.field_mapping" :key="i" class="mapping-row">
+              <el-select
+                v-model="m.k" filterable allow-create default-first-option
+                :placeholder="t('logSources.form.mapPlatform')" class="mono mapping-input"
+              >
+                <el-option v-for="f in fieldOptions" :key="f" :label="f" :value="f" />
+              </el-select>
+              <span class="mapping-arrow">→</span>
+              <el-input
+                v-model="m.v" maxlength="64" class="mono mapping-input"
+                :placeholder="t('logSources.form.mapGraylog')"
+              />
+              <el-button link type="danger" size="small" @click="form.field_mapping.splice(i, 1)">
+                {{ t('logSources.form.mapRemove') }}
+              </el-button>
+            </div>
+            <el-button size="small" @click="form.field_mapping.push({ k: '', v: '' })">
+              + {{ t('logSources.form.mapAdd') }}
+            </el-button>
+            <div class="form-hint">{{ t('logSources.form.mappingHint') }}</div>
+          </div>
+        </el-form-item>
+
         <el-form-item :label="t('logSources.form.purpose')">
           <el-checkbox-group v-model="form.purpose">
             <el-checkbox v-for="p in ['lba', 'patrol', 'soar']" :key="p" :value="p">
@@ -400,7 +425,7 @@ const verifying = ref(false)
 const drawer = reactive({ open: false, row: null, title: '' })
 const form = reactive({
   label: '', stream_id: '', query: '', schema_version: '1.0',
-  required_fields: [], purpose: [], enabled: true,
+  required_fields: [], field_mapping: [], purpose: [], enabled: true,
 })
 const data = reactive({ mcp: {}, items: [], summary: {}, spec: {} })
 
@@ -491,6 +516,8 @@ function openEdit(row) {
   form.query = row.query || ''
   form.schema_version = row.schema_version || '1.0'
   form.required_fields = [...(row.required_fields || [])]
+  form.field_mapping = Object.entries(row.field_mapping || {})
+    .map(([k, v]) => ({ k, v }))
   form.purpose = [...(row.purpose || [])]
   form.enabled = row.enabled !== false
   drawer.open = true
@@ -642,12 +669,19 @@ async function save() {
   if (!drawer.row) return
   saving.value = true
   try {
+    const mapping = {}
+    form.field_mapping.forEach((m) => {
+      const k = (m.k || '').trim()
+      const v = (m.v || '').trim()
+      if (k && v && k !== v) mapping[k] = v
+    })
     await api.logSourceUpdate(drawer.row.source_code, {
       label: form.label,
       stream_id: form.stream_id.trim(),
       query: form.query.trim(),
       schema_version: form.schema_version.trim() || '1.0',
       required_fields: form.required_fields,
+      field_mapping: mapping,
       purpose: form.purpose,
       enabled: form.enabled,
     })
@@ -869,6 +903,21 @@ onMounted(load)
   color: var(--el-text-color-secondary);
   line-height: 1.6;
   margin-top: 4px;
+}
+.mapping-box {
+  width: 100%;
+}
+.mapping-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.mapping-input {
+  width: 180px;
+}
+.mapping-arrow {
+  color: var(--el-text-color-secondary);
 }
 .stream-hint {
   display: flex;

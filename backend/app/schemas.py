@@ -473,6 +473,9 @@ class PatrolStreamConfig(BaseModel):
     purpose: list[str] | None = None
     schema_version: str = Field(default="", max_length=16)
     required_fields: list[str] | None = None
+    # 字段映射：平台契约字段 → Graylog 实际字段（如 username → employee_id）。
+    # 取数按 Graylog 名请求列，取回后反写回平台名；不配则按内置别名/同名处理。
+    field_mapping: dict[str, str] | None = None
     enabled: bool | None = None
 
 
@@ -512,6 +515,7 @@ class LogSourceUpdate(BaseModel):
     enabled: bool | None = None
     schema_version: str | None = Field(default=None, max_length=16)
     required_fields: list[str] | None = None
+    field_mapping: dict[str, str] | None = None
     purpose: list[str] | None = None
 
 

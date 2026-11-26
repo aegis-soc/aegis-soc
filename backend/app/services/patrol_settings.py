@@ -150,9 +150,28 @@ def normalize_streams(raw: Any) -> list[dict[str, Any]]:
             "purpose": [p for p in purpose if p in {"lba", "patrol", "soar"}][:4] or ["patrol"],
             "schema_version": str(item.get("schema_version") or "1.0").strip()[:16],
             "required_fields": required,
+            "field_mapping": _field_mapping(item.get("field_mapping")),
             "enabled": bool(item.get("enabled", True)),
         })
     return streams or [dict(s) for s in DEFAULT_STREAMS]
+
+
+def _field_mapping(raw: Any) -> dict[str, str]:
+    """收敛字段映射：``平台字段 → Graylog 实际字段``。
+
+    真实设备的字段名（如零信任网关的 ``employee_id``）和平台契约（``username``）
+    对不上时，在这里配一条映射；取数按 Graylog 名请求列，取回后反写回平台名，
+    分析层永远只见契约字段。非法项（空键、空值、非 dict）丢弃。
+    """
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key, value in raw.items():
+        k = str(key).strip()[:64]
+        v = str(value).strip()[:64]
+        if k and v and k != v:
+            out[k] = v
+    return dict(list(out.items())[:24])
 
 
 def env_defaults(base: Any = None) -> PatrolConfig:

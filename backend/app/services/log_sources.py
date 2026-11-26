@@ -173,7 +173,8 @@ def probe_source(db: Session, source_code: str, minutes: int | None = None,
     return result
 
 
-UPDATABLE = {"stream_id", "query", "enabled", "required_fields", "schema_version", "label", "purpose"}
+UPDATABLE = {"stream_id", "query", "enabled", "required_fields", "schema_version",
+             "label", "purpose", "field_mapping"}
 
 
 def update_source(db: Session, source_code: str, data: dict[str, Any],

@@ -611,17 +611,58 @@ def build_search_arguments(client: McpHttpClient, stream: dict[str, Any], start:
 
 
 def _request_fields(stream: dict[str, Any]) -> list[str]:
-    """把配置里的 ``required_fields`` 翻成要请求的列名（``ts`` → ``timestamp``）。
+    """把配置翻成要向 Graylog 请求的列名。
 
-    不指定列时 Graylog 只回 ``source`` / ``timestamp`` 两列，巡检的字段契约统计
-    会把其余字段全判成缺失（缺失率 100%、健康度 degraded），纯属假告警。
+    顺序：``field_mapping`` 显式映射 > 内置别名（``ts``→``timestamp``）> 同名直传。
+    最后强制补上时间列和来源列——真机不指定列时只回 ``source``/``timestamp``，
+    而指定列后服务端就只回请求的列；漏了时间列，巡检窗口、24h 时间线、
+    「最近活跃」全部失效，且不报任何错。若配置把 ``ts`` 映射到了别的列（如
+    ``occurred_at``），以映射为准、不再追加 ``timestamp``。
     """
+    mapping = stream.get("field_mapping") or {}
     out: list[str] = []
+    has_time_col = False
     for name in stream.get("required_fields") or []:
-        text = REQUEST_FIELD_ALIASES.get(str(name).strip(), str(name).strip())
-        if text and text not in out:
-            out.append(text)
-    return out
+        text = str(name).strip()
+        if not text:
+            continue
+        if text == "ts":                      # 平台的时间字段，无论映射到哪个列都算「有时间列」
+            has_time_col = True
+        graylog = mapping.get(text) or REQUEST_FIELD_ALIASES.get(text, text)
+        if graylog and graylog not in out:
+            out.append(graylog)
+    # 时间列兜底：配置里没有任何时间字段时补 timestamp——真机指定列后只回请求的列，
+    # 漏时间列时巡检窗口、24h 时间线、「最近活跃」全部静默失效。
+    if not has_time_col:
+        out.append("timestamp")
+    if "source" not in out and "src" not in out:
+        out.append("source")
+    return out[:32]
+
+
+def _apply_field_mapping(records: list[dict[str, Any]],
+                         stream: dict[str, Any]) -> list[dict[str, Any]]:
+    """把按 ``field_mapping`` 取回的 Graylog 字段名反写回平台契约字段名。
+
+    只在平台字段**不存在**时改写（不覆盖服务端本就给出的同名标准字段）；
+    Graylog 侧缺列则不动，让缺失统计如实反映。值为 ``-`` 或空串时视为
+    「设备用占位符表示缺失」（部分网关的习惯），不写入平台字段——否则会
+    凭空多出叫 ``-`` 的用户和设备，匿名判断也失效；pipeline 清洗规则是
+    根治手段，这里是未部署规则时的兜底。
+    """
+    mapping = stream.get("field_mapping") or {}
+    if not mapping:
+        return records
+    for record in records:
+        for platform_key, graylog_name in mapping.items():
+            if platform_key == graylog_name or platform_key in record:
+                continue
+            if graylog_name not in record:
+                continue
+            if str(record[graylog_name]).strip() in {"", "-"}:
+                continue
+            record[platform_key] = record.pop(graylog_name)
+    return records
 
 
 # 「试取」默认回看 30 分钟：比巡检窗口宽，用来区分「本轮恰好没消息」与「根本取不到」
@@ -671,7 +712,8 @@ def probe_stream(stream: dict[str, Any], *, cfg: PatrolConfig | None = None, db=
     out: dict[str, Any] = {
         "tool": cfg.tool,
         "stream": {"name": stream.get("name") or "", "stream_id": stream.get("stream_id") or "",
-                   "query": stream.get("query") or ""},
+                   "query": stream.get("query") or "",
+                   "field_mapping": dict(stream.get("field_mapping") or {})},
         "window": {"minutes": minutes,
                    "from": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
                    "to": end.strftime("%Y-%m-%dT%H:%M:%SZ")},
@@ -707,7 +749,7 @@ def probe_stream(stream: dict[str, Any], *, cfg: PatrolConfig | None = None, db=
                 payload = parse_tool_result(client.call_tool(cfg.tool, args or {}))
             except McpError as retry_exc:
                 return [], "", args or {}, str(retry_exc)[:300]
-        return extract_records(payload), _raw_preview(payload), args or {}, ""
+        return _apply_field_mapping(extract_records(payload), stream), _raw_preview(payload), args or {}, ""
 
     records, raw, args, error = _run(str(stream.get("stream_id") or ""))
     out.update({"fetched": len(records), "raw": raw, "error": error, "arguments": args})
@@ -757,6 +799,7 @@ def _fetch_stream(client: McpHttpClient, stream: dict[str, Any], start: datetime
             status["error"] = str(retry_exc)[:300]
             return [], status
     records = extract_records(parse_tool_result(result))
+    _apply_field_mapping(records, stream)
     for record in records:
         record.setdefault("_stream", stream["name"])
     status["fetched"] = len(records)

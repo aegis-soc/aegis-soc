@@ -37,7 +37,7 @@ python deploy/graylog/mock/mock_graylog_mcp.py --columns --messages 20   # 复�
 兜底——直接打 Graylog REST `GET /api/streams`（mock 同时提供了这个端点，返回同样 9 条流）。
 三种模式都应该让「测试连接」看到 9 条流；如果都看不到，页面的「为什么没拿到流」会列出每一步的失败原因。
 
-`--messages` 打开后，`search_messages` / `aggregate_messages` 会按固定种子生成消息：字段符合 [`docs/log-source-spec.md`](../../../docs/log-source-spec.md)，约 3% 故意不合规（`_schema_ok=false`），匿名访问按规范**移除 `username`** 而不是填空串——正好用来检查平台有没有把这些情况算错。
+`--messages` 打开后，`search_messages` / `aggregate_messages` 会按固定种子生成消息：字段符合 [`docs/log-source-spec.md`](../../../docs/log-source-spec.md)，约 3% 故意不合规（`_schema_ok=false`），匿名访问按规范**移除 `username`** 而不是填空串——正好用来检查平台有没有把这些情况算错。 合成消息同时带真实网关形状的 `employee_name`（工号）/`employee_id`（emp_ UUID），匿名时用 `-` 占位——复现真机行为，用来回归平台的字段映射与占位符清洗。
 
 ## 返回内容
 

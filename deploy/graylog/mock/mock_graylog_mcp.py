@@ -98,8 +98,15 @@ def build_messages(count: int, stream_id: str) -> list[dict]:
         }
         if user:
             msg["username"] = user
+            # 真实零信任网关（如深信服 aTrust）给的是员工字段而非 username：
+            # employee_name 装工号、employee_id 装 emp_ 前缀 UUID。
+            # 匿名时设备用 "-" 占位——真机就是这样，pipeline 清洗规则负责删掉。
+            msg["employee_name"] = f"{rnd.randint(10000000, 99999999)}"
+            msg["employee_id"] = f"emp_{rnd.getrandbits(64):016x}-b947"
         else:
             msg["_anonymous"] = "true"
+            msg["employee_name"] = "-"
+            msg["employee_id"] = "-"
         out.append(msg)
     return out
 

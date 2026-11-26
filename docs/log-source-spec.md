@@ -121,6 +121,7 @@ Graylog  ── 接入、解析、归一化、路由、留存      ← 厂商差
 | `ua_os` | string | 建议 | `windows` / `macos` / `ios` / `android` / `linux` / `other` |
 | `app_id` | string | 建议 | 被访问的内部应用标识（零信任侧的应用 ID） |
 | `app_name` | string | 可选 | 应用显示名 |
+| `display_name` | string | 可选 | 员工/用户显示名（区别于登录账号 `username`）。真实设备常给 `employee_name`，经字段映射（§3.6）反写进来 |
 | `gateway_node` | string | 建议 | 网关节点标识，用于定位"某节点异常" |
 | `req_bytes` | long | 可选 | 请求大小 |
 | `resp_bytes` | long | 可选 | 响应大小 |
@@ -136,6 +137,31 @@ Graylog  ── 接入、解析、归一化、路由、留存      ← 厂商差
 | `severity` | `low` `medium` `high` `critical` | 设备 1–4 → 直接映射；设备 5 级或 1–10 分由 Graylog 折算 |
 | `ua_class` | `pc` `mobile` `tablet` `feishu` `other` | `feishu` 单列，因为企业受管终端的唯一可靠信号 |
 | `threat_type` | `webshell` `sqli` `xss` `bruteforce` `c2` `scan` `exploit` `other` | 未覆盖的先归 `other`，**不新增值**；确需新增走 §8 |
+
+### 3.6 字段映射（设备字段 → 平台契约）
+
+真实设备的字段名经常和契约对不上——零信任网关（如深信服 aTrust）给的是
+`employee_id` / `employee_name`，而平台消费 `username` / `display_name`。
+**映射做成数据源级配置**，不改平台代码、不写死 pipeline：
+
+| 项 | 说明 |
+|---|---|
+| 存放 | `patrol_setting.streams[].field_mapping`，数据源页「编辑 → 字段映射」可视化配置 |
+| 方向 | **平台字段 → Graylog 实际字段**（如 `username: employee_id`） |
+| 取数 | 向 Graylog 请求列时按映射名发（`fields: ["employee_id", ...]`） |
+| 入库 | 记录取回后反写回平台字段名，LBA / 巡检永远只见契约字段 |
+| 时间列 | `timestamp` 与 `source` 自动附带，不需要配置；`ts` 被映射到设备自己的时间列（如 `occurred_at`）时以映射为准 |
+| 占位符 | 映射值为 `-` / 空串时不写入平台字段（设备用 `-` 表示缺失是常见习惯，直接反写会凭空多出叫 `-` 的用户）；根治手段是 pipeline 清洗规则（`ztna.rules` stage 0），平台侧反写跳过是兜底 |
+| 不覆盖 | 服务端本就回了同名标准字段（如原生 `username`）时，不做映射改写 |
+
+现场示例（深信服 aTrust）：
+
+```
+required_fields: ts, username, display_name, src_ip
+field_mapping:   username → employee_id, display_name → employee_name
+```
+
+> employee_id 是唯一值（UUID）做 `username`；employee_name 是工号/姓名做 `display_name`。
 
 ## 4. Graylog 侧落地规范
 
