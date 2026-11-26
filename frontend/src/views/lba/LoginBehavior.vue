@@ -84,7 +84,7 @@ async function load() {
     ])
     overview.value = ov
     rows.value = list.items
-  } catch (e) { /* 拦截器已提示 */ } finally { loading.value = false }
+  } catch (e) { console.error('[lba] 取数失败:', e) /* axios 错误拦截器已提示 */ } finally { loading.value = false }
 }
 
 function openDetail(row) {

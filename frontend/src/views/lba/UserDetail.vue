@@ -111,7 +111,7 @@ async function load() {
   loading.value = true
   try {
     detail.value = await lbaApi.userProfile(route.params.username)
-  } catch (e) { /* 拦截器已提示 */ } finally { loading.value = false }
+  } catch (e) { console.error('[lba] 详情取数失败:', e) /* axios 错误拦截器已提示 */ } finally { loading.value = false }
 }
 
 async function blockIp(ip) {

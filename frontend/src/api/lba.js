@@ -153,7 +153,7 @@ function mockDetail(username) {
 
 export const lbaApi = {
   loginOverview: () =>
-    MOCK
+    LBA_MOCK
       ? Promise.resolve({
           active_users_24h: 2386,
           devices_total: 4820,
@@ -164,7 +164,7 @@ export const lbaApi = {
       : http.get('/lba/login/overview'),
 
   anomalyUsers: (params = {}) =>
-    MOCK
+    LBA_MOCK
       ? Promise.resolve((() => {
           const level = params.risk_level || ''
           const items = USERS.filter((u) => !level || u.risk === level).map((u) => ({
@@ -176,5 +176,5 @@ export const lbaApi = {
       : http.get('/lba/login/anomaly-users', { params }),
 
   userProfile: (username) =>
-    MOCK ? Promise.resolve(mockDetail(username)) : http.get(`/lba/profile/user/${encodeURIComponent(username)}`),
+    LBA_MOCK ? Promise.resolve(mockDetail(username)) : http.get(`/lba/profile/user/${encodeURIComponent(username)}`),
 }
