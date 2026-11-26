@@ -72,15 +72,23 @@ def _ip_bin(value: str) -> tuple[bytes, int, bool]:
 
 
 def _wait_for_tables(max_retries: int = 30, interval: float = 2.0) -> None:
+    last_reason = ""
     for attempt in range(1, max_retries + 1):
         try:
             with SessionLocal() as db:
                 db.execute(text("SELECT 1 FROM system_role LIMIT 1"))
             return
         except Exception as exc:
+            # 只记类名排不了障——「Access denied」和「Can't connect」的处置完全不同；
+            # 错误文本可能含连接串里的密码，截断并只在末次失败时打全量原因
+            last_reason = str(exc).strip()[:300] or exc.__class__.__name__
             logger.warning("等待数据库就绪 (%s/%s): %s", attempt, max_retries, exc.__class__.__name__)
             time.sleep(interval)
-    raise RuntimeError("数据库在限定时间内未就绪，请检查 MySQL 容器与 sql/init.sql 挂载")
+    raise RuntimeError(
+        f"数据库在限定时间内未就绪（末次原因：{last_reason}）；"
+        "请检查 MySQL 容器状态、.env 的 MYSQL_PASSWORD 与 DATABASE_URL 是否一致、"
+        "密码特殊字符是否已 URL 编码"
+    )
 
 
 def _get_or_create(db: Session, model: type, *, lookup: dict[str, Any], defaults: dict[str, Any]) -> Any:
