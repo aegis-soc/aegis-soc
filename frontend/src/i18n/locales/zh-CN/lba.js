@@ -7,7 +7,7 @@ export default {
   },
   anomaly: {
     title: '用户异常行为列表',
-    col: { user: '用户', device: '设备', ipChange: 'IP 变化', risk: '风险', pending: '待处置事件', lastActive: '最近活跃', action: '操作' },
+    col: { user: '用户ID', name: '用户名', device: '设备', ipChange: 'IP 变化', risk: '风险', pending: '待处置事件', lastActive: '最近活跃', action: '操作' },
     devices: '{n} 台设备',
     ipChange: '{n} 个IP / {m} 个国家',
     filterRisk: '风险等级',

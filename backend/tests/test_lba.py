@@ -69,20 +69,55 @@ def test_classify_risk_thresholds():
     assert lba._classify_risk(stats(fail=10)) == "high"
 
 
+def test_is_public_ip():
+    assert lba._is_public_ip("8.8.8.8") is True
+    assert lba._is_public_ip("10.46.1.5") is False
+    assert lba._is_public_ip("172.16.0.9") is False
+    assert lba._is_public_ip("192.168.1.1") is False
+    assert lba._is_public_ip("172.32.1.1") is True      # 172.16/12 之外是公网
+    assert lba._is_public_ip("not-an-ip") is False
+
+
+def test_aggregate_internal_ip_not_counted(monkeypatch):
+    """内网 IP 不参与异常判定（2026-11-26 真机反馈），但轨迹明细保留。"""
+    now = datetime(2026, 11, 26, 12, 0, 0)
+    recs = [
+        _rec("zhang", ip="10.46.1.5", ts=now - timedelta(hours=1)),
+        _rec("zhang", ip="10.46.1.6", ts=now - timedelta(hours=2)),
+        _rec("zhang", ip="192.168.8.8", ts=now - timedelta(hours=3)),
+        _rec("zhang", ip="58.1.2.3", ts=now - timedelta(hours=4)),
+        _rec("zhang", ip="58.1.2.3", ts=now - timedelta(hours=5)),
+        _rec("zhang", ip="58.1.2.4", ts=now - timedelta(hours=6)),
+    ]
+    for r in recs:
+        r["display_name"] = "张三"
+    monkeypatch.setattr(lba, "_fetch_window", lambda *a, **k: recs)
+    monkeypatch.setattr(lba.geoip, "lookup", lambda ip: None)
+    users = lba._aggregate(None, None, now)
+    u = users[0]
+    assert u["ip_count_7d"] == 2                 # 只算公网，内网 3 个不计
+    assert u["country_count_7d"] == 0
+    assert u["risk"] == "low"                    # 内网再多也不触发风险
+    assert u["display_name"] == "张三"
+    assert len(u["ip_7d"]) == 5                  # 轨迹明细仍保留内网
+    assert u["ip_7d"]["10.46.1.5"]["internal"] is True
+    assert u["ip_7d"]["58.1.2.3"]["internal"] is False
+
+
 # ---------------------------------------------------------------- 接口
 @pytest.fixture
 def lba_users(monkeypatch):
     """7d 窗口聚合结果直接注入，绕过 MCP 取数。"""
     now = datetime(2026, 11, 26, 12, 0, 0)
     users = [
-        {"username": "wangwu", "risk": "high", "device_count": 2, "ip_count_7d": 6,
+        {"username": "wangwu", "display_name": "", "risk": "high", "device_count": 2, "ip_count_7d": 6,
          "country_count_7d": 2, "fail_24h": 0, "requests_24h": 10,
          "last_active": now - timedelta(hours=1), "ip_7d": {}, "timeline": [],
          "devices": {"k1": {"device_key": "k1", "ua_class": "pc", "browser": "chrome",
                             "browser_ver": "131", "managed": "unknown", "ua_raw": "u1",
                             "last_active": now, "ips": {}}},
          },
-        {"username": "lisi", "risk": "low", "device_count": 1, "ip_count_7d": 1,
+        {"username": "lisi", "display_name": "", "risk": "low", "device_count": 1, "ip_count_7d": 1,
          "country_count_7d": 1, "fail_24h": 0, "requests_24h": 5,
          "last_active": now, "ip_7d": {}, "timeline": [],
          "devices": {"k2": {"device_key": "k2", "ua_class": "feishu", "browser": "feishu",

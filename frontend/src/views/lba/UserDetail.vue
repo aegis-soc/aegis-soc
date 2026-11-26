@@ -3,6 +3,7 @@
     <div class="head">
       <el-button link @click="router.back()">← </el-button>
       <span class="head-name">{{ detail.username }}</span>
+      <span v-if="detail.display_name" class="dim" style="margin: 0 8px">{{ detail.display_name }}</span>
       <el-tag :type="riskTag(detail.risk)">{{ riskLabel(detail.risk) }}</el-tag>
     </div>
 

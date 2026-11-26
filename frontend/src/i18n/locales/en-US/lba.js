@@ -7,7 +7,7 @@ export default {
   },
   anomaly: {
     title: 'User anomaly list',
-    col: { user: 'User', device: 'Devices', ipChange: 'IP changes', risk: 'Risk', pending: 'Pending events', lastActive: 'Last active', action: 'Actions' },
+    col: { user: 'User ID', name: 'Name', device: 'Devices', ipChange: 'IP changes', risk: 'Risk', pending: 'Pending events', lastActive: 'Last active', action: 'Actions' },
     devices: '{n} device(s)',
     ipChange: '{n} IP(s) / {m} countr(ies)',
     filterRisk: 'Risk level',

@@ -28,6 +28,8 @@ from app.common import BizError
 from app.database import utcnow
 from app.config import settings as default_settings
 from app.services import geoip, patrol
+
+import ipaddress
 from app.services.patrol_settings import PatrolConfig, load as load_config
 
 logger = logging.getLogger("aegis")
@@ -159,6 +161,14 @@ def _record_username(record: dict[str, Any]) -> str | None:
     return value[:64]
 
 
+def _is_public_ip(ip: str) -> bool:
+    """公网地址判定：内网/环回/保留地址不参与异常判定（与巡检口径一致）。"""
+    try:
+        return ipaddress.ip_address(ip).is_global
+    except ValueError:
+        return False
+
+
 def _norm_records(records: list[dict[str, Any]], fallback: datetime) -> list[dict[str, Any]]:
     """取回记录 → LBA 视图：补时间、UA 派生、IP 归属；坏行跳过不毁整体。"""
     out: list[dict[str, Any]] = []
@@ -174,6 +184,8 @@ def _norm_records(records: list[dict[str, Any]], fallback: datetime) -> list[dic
         info = geoip.lookup(ip_value) if ip_value else None
         out.append({
             "username": _record_username(record),
+            "display_name": str(record.get("display_name") or "").strip()[:64],
+            "internal": not _is_public_ip(ip_value) if ip_value else True,
             "src_ip": ip_value,
             "seen_at": seen_at,
             "url": str(record.get("url") or "")[:255],
@@ -217,9 +229,12 @@ def _aggregate(db: Session | None, cfg: PatrolConfig, now: datetime,
         if name is None:
             continue
         user = users.setdefault(name, {
-            "username": name, "last_active": rec["seen_at"], "requests_24h": 0,
-            "fail_24h": 0, "ip_7d": {}, "devices": {}, "timeline": [],
+            "username": name, "display_name": "", "last_active": rec["seen_at"],
+            "requests_24h": 0, "fail_24h": 0, "ip_7d": {}, "devices": {},
+            "timeline": [],
         })
+        if not user["display_name"] and rec["display_name"]:
+            user["display_name"] = rec["display_name"]
         if rec["seen_at"] > user["last_active"]:
             user["last_active"] = rec["seen_at"]
         if rec["seen_at"] >= now - WINDOW_24H:
@@ -231,6 +246,7 @@ def _aggregate(db: Session | None, cfg: PatrolConfig, now: datetime,
         if rec["src_ip"]:
             ip_entry = user["ip_7d"].setdefault(rec["src_ip"], {
                 "first_seen": rec["seen_at"], "last_seen": rec["seen_at"],
+                "internal": rec["internal"],
                 "country": rec["country"], "city": rec["city"], "isp": rec["isp"]})
             ip_entry["first_seen"] = min(ip_entry["first_seen"], rec["seen_at"])
             ip_entry["last_seen"] = max(ip_entry["last_seen"], rec["seen_at"])
@@ -245,8 +261,12 @@ def _aggregate(db: Session | None, cfg: PatrolConfig, now: datetime,
 
     for user in users.values():
         user["device_count"] = len(user["devices"])
-        user["ip_count_7d"] = len(user["ip_7d"])
-        user["country_count_7d"] = len({v["country"] for v in user["ip_7d"].values() if v["country"]})
+        # 内网 IP 不参与异常判定：跨 IP / 跨国家只统计公网地址（2026-11-26 真机
+        # 反馈：零信任日志里内网占比极高，混入后全员误报）。内网地址仍保留在
+        # ip_7d / 设备轨迹明细里，供用户详情展示。
+        public_ips = {ip: v for ip, v in user["ip_7d"].items() if not v["internal"]}
+        user["ip_count_7d"] = len(public_ips)
+        user["country_count_7d"] = len({v["country"] for v in public_ips.values() if v["country"]})
         user["risk"] = _classify_risk(user)
     return list(users.values())
 
@@ -259,7 +279,9 @@ def _device_payload(device: dict[str, Any]) -> dict[str, Any]:
         "managed": device["managed"], "ua_raw": device["ua_raw"],
         "last_active": _fmt(device["last_active"]),
         "ips": [{
-            "ip": ip, "country": meta["country"] or "未知", "city": meta["city"] or "",
+            "ip": ip, "internal": meta.get("internal", False),
+            "country": ("内网" if meta.get("internal") else None) or meta["country"] or "未知",
+            "city": "" if meta.get("internal") else (meta["city"] or ""),
             "isp": meta["isp"] or "", "first_seen": _fmt(meta["first_seen"]),
             "last_seen": _fmt(meta["last_seen"]),
         } for ip, meta in ips],
@@ -304,7 +326,8 @@ def anomaly_users(db: Session | None = None, risk_level: str = "",
             if risk_level and u["risk"] != risk_level:
                 continue
             items.append({
-                "username": u["username"], "risk": u["risk"],
+                "username": u["username"], "display_name": u["display_name"],
+                "risk": u["risk"],
                 "device_count": u["device_count"],
                 "device_types": sorted({d["ua_class"] for d in u["devices"].values()}),
                 "ip_count_7d": u["ip_count_7d"],
@@ -339,7 +362,8 @@ def user_profile(db: Session | None = None, username: str = "") -> dict[str, Any
         user = matches[0]
         timeline = sorted(user["timeline"], key=lambda r: r["seen_at"], reverse=True)
         return {
-            "username": user["username"], "risk": user["risk"],
+            "username": user["username"], "display_name": user["display_name"],
+            "risk": user["risk"],
             "requests_24h": user["requests_24h"],
             "ip_count_7d": user["ip_count_7d"],
             "country_count_7d": user["country_count_7d"],

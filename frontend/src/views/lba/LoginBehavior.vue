@@ -23,7 +23,10 @@
       </template>
 
       <el-table :data="rows" v-loading="loading" @row-click="openDetail" row-class-name="clickable">
-        <el-table-column :label="t('lba.anomaly.col.user')" prop="username" width="140" />
+        <el-table-column :label="t('lba.anomaly.col.user')" prop="username" width="150" show-overflow-tooltip />
+        <el-table-column :label="t('lba.anomaly.col.name')" min-width="110">
+          <template #default="{ row }">{{ row.display_name || '-' }}</template>
+        </el-table-column>
         <el-table-column :label="t('lba.anomaly.col.device')" min-width="200">
           <template #default="{ row }">
             <span>{{ t('lba.anomaly.devices', { n: row.device_count }) }}</span>
