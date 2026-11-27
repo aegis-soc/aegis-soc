@@ -476,6 +476,11 @@ class PatrolStreamConfig(BaseModel):
     # 字段映射：平台契约字段 → Graylog 实际字段（如 username → employee_id）。
     # 取数按 Graylog 名请求列，取回后反写回平台名；不配则按内置别名/同名处理。
     field_mapping: dict[str, str] | None = None
+    # 值映射：平台字段 → {原始值 → 标准词表}（厂商动作枚举 1/3/6/8 → observe/block/ban）。
+    # 巡检规则只认标准词表，厂商差异在这里抹平。
+    value_mapping: dict[str, dict[str, str]] | None = None
+    # 流级 IP 白名单（监控探针等可信地址），命中的 IP 不进巡检候选。
+    ip_whitelist: list[str] | None = None
     enabled: bool | None = None
 
 

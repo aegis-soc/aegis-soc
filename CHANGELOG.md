@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### 新增：巡检值映射层 + 4 条新规则（厂商动作枚举通用化，2026-11-27）
+- 数据源级 `value_mapping`：厂商动作枚举（绿盟 IPS 1/3/6/8、WAF permit/drop/block）→ 平台标准词表（observe/audit/block/ban/pass/reject）；数字枚举必须显式配置，关键词启发仅作兜底；映射值不在词表时原样返回不悄悄改语义
+- 流级 `ip_whitelist`：监控探针等可信地址不进巡检候选
+- 新规则：WAF 拒绝高频（REJECT≥5，权重3）、登录爆破（login 页 REJECT≥10，权重3）、零信任多域名扫描（≥4 个不同 dst_domain，权重4）、零信任目录扫描（URI≥20 且路径前缀≥15，权重2）、WAF 伪造源 IP（XFF 链最后一个 ≠ 直连地址，权重2）
+- 口径修正：ztna_burst 改按 `l7_app_request_type=redirect_auth` 计数（网关失败也回 200，status_code 不可靠）；IPS「未拦截」= observe/audit；WAF「放行/仅记录」= pass/observe
+- 标准词表重构：classify_action 六桶关键词（ban/block/reject/pass/audit/observe），chat 日志编译器同步
+- WAF 默认映射预填 url←r_url、action←waf_action；required_fields 扩展真机字段；前端抽屉新增值映射编辑器与白名单输入
+
+
 ### 修复：LBA 内网 IP 不再计入异常判定 + 列表增加用户名列（真机反馈）
 - 风险判定（跨 IP/跨国家）只统计公网地址；内网 IP 保留在用户详情轨迹中并标注「内网」
 - 异常用户列表：第一列用户ID、第二列用户名（display_name，取自 employee_name 映射）；用户详情标题同步显示

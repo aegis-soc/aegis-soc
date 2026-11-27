@@ -83,11 +83,28 @@ def test_extract_records_handles_common_shapes():
 
 @pytest.mark.parametrize("value,expected", [
     ("block", "block"), ("阻断", "block"), ("Drop", "block"),
-    ("alert", "observe"), ("pass", "observe"), ("仅记录", "observe"),
+    ("banned", "ban"), ("blacklist", "ban"),
+    ("reject", "reject"), ("REJECT", "reject"),
+    ("permit", "pass"), ("allow", "pass"), ("放行", "pass"),
+    ("audit", "audit"),
+    ("alert", "observe"), ("pass", "pass"), ("仅记录", "observe"),
     ("", "unknown"), ("weird", "unknown"),
 ])
 def test_classify_action(value, expected):
     assert patrol.classify_action(value) == expected
+
+
+def test_normalize_action_value_mapping_priority():
+    """厂商数字枚举必须走 value_mapping；映射优先于关键词启发。"""
+    nsfocus = {"1": "observe", "3": "block", "6": "audit", "8": "ban"}
+    assert patrol.normalize_action("1", nsfocus) == "observe"
+    assert patrol.normalize_action("3", nsfocus) == "block"
+    assert patrol.normalize_action("8", nsfocus) == "ban"
+    assert patrol.normalize_action("permit", {"permit": "observe"}) == "observe"
+    # 未命中映射走启发兜底
+    assert patrol.normalize_action("blocked", nsfocus) == "block"
+    # 映射值不在标准词表也原样返回（规则判定自然落空，不悄悄改语义）
+    assert patrol.normalize_action("9", nsfocus) == "unknown"
 
 
 @pytest.mark.parametrize("value,expected", [
@@ -120,20 +137,132 @@ def test_l1_rules_and_internal_ips_ignored():
 
 
 def test_ztna_burst_needs_threshold():
+    """ztna_burst 按 redirect_auth（认证重定向）计数——网关失败也回 200，
+    status_code 不可靠（2026-11-26 真机确认）；普通请求不计数。"""
     now = utcnow()
-    few = [patrol._flatten(graylog_message(f"z{i}", "45.33.20.20", action="fail"))
-           for i in range(3)]
+    few = [patrol._flatten(graylog_message(f"z{i}", "45.33.20.20", action="pass",
+            extra={"l7_app_request_type": "redirect_auth"})) for i in range(3)]
     for item in few:
         item.setdefault("_stream", "ZTNA")
     candidates, _ = patrol.build_candidates(few, now)
-    assert candidates == []  # 单次失败不构成理由
+    assert candidates == []  # 少于阈值不构成理由
 
-    many = [patrol._flatten(graylog_message(f"z{i}", "45.33.20.20", action="fail"))
-            for i in range(12)]
+    many = [patrol._flatten(graylog_message(f"z{i}", "45.33.20.20", action="pass",
+             extra={"l7_app_request_type": "redirect_auth"})) for i in range(12)]
     for item in many:
         item.setdefault("_stream", "ZTNA")
     candidates, _ = patrol.build_candidates(many, now)
     assert candidates[0].rule_counts["ztna_burst"] == 12
+
+    # 只有 anonymous_access（无 redirect_auth）不触发认证爆破
+    anon = [patrol._flatten(graylog_message(f"a{i}", "45.33.20.21", action="pass",
+             extra={"l7_app_request_type": "anonymous_access"})) for i in range(15)]
+    for item in anon:
+        item.setdefault("_stream", "ZTNA")
+    candidates, _ = patrol.build_candidates(anon, now)
+    assert all("ztna_burst" not in c.rule_counts for c in candidates)
+
+
+
+def _waf(ip, action="reject", url="/api/x", extra=None, i=0):
+    item = patrol._flatten(graylog_message(f"w{i}", ip, action=action,
+                                           extra={"r_url": url, **(extra or {})}))
+    item.setdefault("_stream", "WAF")
+    return item
+
+
+def _zt(ip, rtype="anonymous_access", domain="h1.example.com", url="/a/b", i=0):
+    item = patrol._flatten(graylog_message(f"t{i}", ip, action="pass",
+                    extra={"l7_app_request_type": rtype, "dst_domain": domain,
+                           "request_uri": url}))
+    item.setdefault("_stream", "ZTNA")
+    return item
+
+
+def test_waf_reject_and_bruteforce_login():
+    now = utcnow()
+    # 5 次 REJECT 触发 waf_reject
+    items = [_waf("45.33.20.30", i=i) for i in range(5)]
+    candidates, _ = patrol.build_candidates(items, now)
+    assert candidates[0].rule_counts["waf_reject"] == 5
+    # 10 次登录页 REJECT 同时触发登录爆破
+    items = [_waf("45.33.20.31", url="/portal/login.jsp", i=i) for i in range(10)]
+    candidates, _ = patrol.build_candidates(items, now)
+    assert candidates[0].rule_counts["waf_reject"] == 10
+    assert candidates[0].rule_counts["bruteforce_login"] == 10
+    # 4 次 REJECT 不触发
+    candidates, _ = patrol.build_candidates([_waf("45.33.20.32", i=i) for i in range(4)], now)
+    assert all("waf_reject" not in c.rule_counts for c in candidates)
+
+
+def test_waf_spoofed_xff():
+    now = utcnow()
+    items = [_waf("45.33.20.40", action="permit",
+                  extra={"r_url": "/x", "XForwardedFor": "1.2.3.4, 5.6.7.8"}, i=i)
+             for i in range(2)]
+    candidates, _ = patrol.build_candidates(items, now)
+    assert candidates[0].rule_counts.get("waf_spoofed") == 1
+    # XFF 最后一个与直连一致 → 不算伪造
+    ok = [_waf("45.33.20.41", action="permit",
+               extra={"r_url": "/x", "XForwardedFor": "45.33.20.41"}, i=i) for i in range(2)]
+    candidates, _ = patrol.build_candidates(ok, now)
+    assert all("waf_spoofed" not in c.rule_counts for c in candidates)
+
+
+def test_zt_multi_domain_scan():
+    now = utcnow()
+    domains = [f"h{n}.example.com" for n in range(4)]
+    items = [_zt("45.33.20.50", domain=d, url=f"/h{n}/x", i=n) for n, d in enumerate(domains)]
+    candidates, _ = patrol.build_candidates(items, now)
+    assert candidates[0].rule_counts["zt_multi_domain"] == 4
+    # 3 个域名不触发
+    items = [_zt("45.33.20.51", domain=f"h{n}.e.com", url=f"/h{n}/x", i=n) for n in range(3)]
+    candidates, _ = patrol.build_candidates(items, now)
+    assert all("zt_multi_domain" not in c.rule_counts for c in candidates)
+
+
+def test_zt_dir_scan_needs_uri_and_prefix():
+    now = utcnow()
+    # 20 个不同 URI 且前缀分散 → 触发
+    uris = [f"/app{a}/mod{b}/file" for a in range(5) for b in range(4)]
+    items = [_zt("45.33.20.60", url=u, domain="h.e.com", i=n) for n, u in enumerate(uris)]
+    candidates, _ = patrol.build_candidates(items, now)
+    assert candidates[0].rule_counts["zt_dir_scan"] == 20
+    # URI 多但前缀集中（同一 /app/mod 下翻页参数不同）→ 不触发
+    uris = [f"/app/mod/file?x={n}" for n in range(25)]
+    items = [_zt("45.33.20.61", url=u, domain="h.e.com", i=n) for n, u in enumerate(uris)]
+    candidates, _ = patrol.build_candidates(items, now)
+    assert all("zt_dir_scan" not in c.rule_counts for c in candidates)
+
+
+def test_ip_whitelist_skips_candidates():
+    now = utcnow()
+    items = [_zt("180.184.86.192", domain=f"h{n}.e.com", url=f"/h{n}/x", i=n)
+             for n in range(6)]
+    candidates, ignored = patrol.build_candidates(items, now)
+    assert candidates and candidates[0].rule_counts.get("zt_multi_domain")  # 无白名单时照常触发
+    candidates, ignored = patrol.build_candidates(
+        items, now, ip_whitelist={"180.184.86.192"})
+    assert candidates == []          # 白名单命中：不进候选
+    assert ignored == 0              # 也不计入非公网（语义不同）
+
+
+def test_value_mapping_drives_ips_rule():
+    """绿盟 IPS：action=1 仅告警 → observe 触发未拦截规则；action=3 阻断 → 不触发。"""
+    now = utcnow()
+    maps = {"IPS": {"action": {"1": "observe", "3": "block", "8": "ban"}}}
+    items = [patrol._flatten(graylog_message(f"n{i}", "45.33.20.70", action="1",
+             extra={"threat_type": "exploit"})) for i in range(2)]
+    for item in items:
+        item.setdefault("_stream", "IPS")
+    candidates, _ = patrol.build_candidates(items, now, action_maps=maps)
+    assert candidates[0].rule_counts["ips_observed"] == 2
+    blocked = [patrol._flatten(graylog_message(f"n{i}", "45.33.20.71", action="3"))
+               for i in range(2)]
+    for item in blocked:
+        item.setdefault("_stream", "IPS")
+    candidates, _ = patrol.build_candidates(blocked, now, action_maps=maps)
+    assert candidates == []          # 已阻断不进候选
 
 
 def test_gates_skip_whitelist_and_existing(client, monkeypatch):

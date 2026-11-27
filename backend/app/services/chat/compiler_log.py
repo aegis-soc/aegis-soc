@@ -102,8 +102,10 @@ def _keep(record: dict[str, Any], spec: LogSpec) -> bool:
         return False                        # 没有源 IP 的记录进不了 Top 榜
     if spec.action != "any":
         action = classify_action(_first(record, FIELD_ALIASES["action"]))
-        expected = "observe" if spec.action == "pass" else "block"
-        if action != expected:
+        # 标准词表语义：「未拦截/放行」= observe/audit/pass；「已拦截」= block/ban/reject
+        expected = ({"observe", "audit", "pass"} if spec.action == "pass"
+                    else {"block", "ban", "reject"})
+        if action not in expected:
             return False
     if spec.severity_min:
         if parse_severity(_first(record, FIELD_ALIASES["severity"])) < spec.severity_min:

@@ -173,6 +173,46 @@ field_mapping:   url → request_uri, status_code → response_status,
 > 平台内置默认映射即上表（`patrol_settings.ZTNA_DEFAULT_MAPPING`），配置里未显式写
 > field_mapping 的零信任流自动预填；显式清空 `{}` 不覆盖。
 
+### 3.7 值映射（厂商枚举 → 平台标准词表）
+
+字段名之外，**字段值**也随厂商各异：绿盟 IPS 的 `action=1` 是仅告警、`3` 是阻断、
+`8` 是封禁；某 WAF 的 `action` 又是 `permit`(放行)/`drop`(拦截)/`block`(封禁)。
+巡检规则**只认平台标准词表**，厂商差异由数据源级 `value_mapping` 配置抹平：
+
+```
+标准词表：observe(仅告警/记录) · audit(审计) · block(阻断) · ban(封禁)
+          pass(放行) · reject(拒绝) · unknown
+```
+
+配置形态（数据源抽屉可视化编辑，与 field_mapping 并列）：
+
+```json
+"value_mapping": {
+  "action": { "1": "observe", "3": "block", "6": "audit", "8": "ban" }
+}
+```
+
+| 规则 | 说明 |
+|---|---|
+| 显式优先 | value_mapping 命中的值直接采用；**数字枚举必须显式配置**，启发式猜不了 |
+| 启发兜底 | 未命中走关键词推断（banned→ban、drop→block、permit→pass、reject→reject、audit→audit…） |
+| 不改语义 | 映射值不在标准词表时原样返回，规则判定自然落空，绝不悄悄改写 |
+
+流级还可配 `ip_whitelist`（每行一个 IP，如监控探针），命中的地址不进巡检候选。
+
+**三流真机字段参照（2026-11-27 用户口径）**：
+
+| 流 | 关键字段 | 说明 |
+|---|---|---|
+| IPS | `source_ip` `dst_ip` `action`(数字枚举) `threat_type` `event_msg` `scountry/scity` `security_name` `dst_port` `protocol` | action 需配值映射（1=告警 3=阻断 8=封禁，具体按厂商文档） |
+| WAF | `source_ip` `src_ip`/`XForwardedFor` `waf_action` `r_url` | XFF 多 IP 链取最后一个为真实客户端 IP；与直连地址不一致 → 伪造 |
+| 零信任 | `l7_app_request_type` `src_ip` `dst_domain` | redirect_auth=认证重定向、anonymous_access=匿名访问；dst_domain 供多域名扫描检测 |
+
+默认映射预填：WAF 流 `url←r_url`、`action←waf_action`；零信任流见 §3.6。
+取数列按 required_fields 请求（WAF 含 waf_action/r_url/xforwardedfor，零信任含
+l7_app_request_type/dst_domain），未在映射里的厂商原生命按原名保留在记录里，
+规则层通过内置别名（FIELD_ALIASES）定位。
+
 ## 4. Graylog 侧落地规范
 
 ### 4.1 流的分层

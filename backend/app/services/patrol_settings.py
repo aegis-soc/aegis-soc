@@ -36,6 +36,12 @@ TOKEN_MASK = "********"
 #   employee_id(UUID) / employee_name(工号) 仅部分消息携带。
 # 配了这条映射后契约字段全部落位；norm 流（pipeline 已归一）不受影响——
 # 归一流里契约字段本就同名直传，映射不触发。
+# WAF 真机字段映射（2026-11-27 用户口径：waf_action 承载动作枚举，r_url 为请求路径）
+WAF_DEFAULT_MAPPING: dict[str, str] = {
+    "url": "r_url",
+    "action": "waf_action",
+}
+
 ZTNA_DEFAULT_MAPPING: dict[str, str] = {
     "url": "request_uri",
     "status_code": "response_status",
@@ -51,11 +57,13 @@ DEFAULT_STREAMS: list[dict[str, Any]] = [
      "required_fields": ["ts", "src_ip", "action", "severity"], "enabled": True},
     {"name": "WAF", "label": "WAF 应用防火墙", "stream_id": "", "query": "",
      "source_code": "waf", "purpose": ["patrol"], "schema_version": "1.0",
-     "required_fields": ["ts", "src_ip", "action", "severity", "url"], "enabled": True},
+     "required_fields": ["ts", "src_ip", "action", "severity", "url",
+                         "waf_action", "r_url", "xforwardedfor"],
+     "field_mapping": dict(WAF_DEFAULT_MAPPING), "enabled": True},
     {"name": "ZTNA", "label": "零信任接入", "stream_id": "", "query": "",
      "source_code": "ztna", "purpose": ["lba", "patrol"], "schema_version": "1.0",
      "required_fields": ["ts", "src_ip", "url", "status_code", "ua_raw", "ua_class",
-                         "username", "display_name"],
+                         "username", "display_name", "l7_app_request_type", "dst_domain"],
      "field_mapping": dict(ZTNA_DEFAULT_MAPPING),
      "enabled": True},
     {"name": "NTA", "label": "态势感知 / 全流量", "stream_id": "", "query": "",
@@ -72,9 +80,10 @@ SOURCE_CODES = {"ips", "waf", "ztna", "nta"}
 # 未声明 required_fields 时按源给默认值，避免页面出现空契约
 DEFAULT_REQUIRED = {
     "ips": ["ts", "src_ip", "action", "severity"],
-    "waf": ["ts", "src_ip", "action", "severity", "url"],
+    "waf": ["ts", "src_ip", "action", "severity", "url",
+            "waf_action", "r_url", "xforwardedfor"],
     "ztna": ["ts", "src_ip", "url", "status_code", "ua_raw", "ua_class",
-             "username", "display_name"],
+             "username", "display_name", "l7_app_request_type", "dst_domain"],
     "nta": ["ts", "src_ip"],
 }
 DEFAULT_PURPOSE = {"ztna": ["lba", "patrol"]}
@@ -164,6 +173,8 @@ def normalize_streams(raw: Any) -> list[dict[str, Any]]:
         mapping_raw = item.get("field_mapping")
         if mapping_raw is None and code == "ztna":
             mapping_raw = dict(ZTNA_DEFAULT_MAPPING)
+        if mapping_raw is None and code == "waf":
+            mapping_raw = dict(WAF_DEFAULT_MAPPING)
         streams.append({
             "name": str(item.get("name")).upper()[:16],
             "label": str(item.get("label") or item.get("name"))[:64],
@@ -174,6 +185,8 @@ def normalize_streams(raw: Any) -> list[dict[str, Any]]:
             "schema_version": str(item.get("schema_version") or "1.0").strip()[:16],
             "required_fields": required,
             "field_mapping": _field_mapping(mapping_raw),
+            "value_mapping": _value_mapping(item.get("value_mapping")),
+            "ip_whitelist": _string_list(item.get("ip_whitelist"), limit=64),
             "enabled": bool(item.get("enabled", True)),
         })
     return streams or [dict(s) for s in DEFAULT_STREAMS]
@@ -195,6 +208,31 @@ def _field_mapping(raw: Any) -> dict[str, str]:
         if k and v and k != v:
             out[k] = v
     return dict(list(out.items())[:24])
+
+
+def _value_mapping(raw: Any) -> dict[str, dict[str, str]]:
+    """收敛值映射：``平台字段 → {原始值 → 标准词表}``。
+
+    厂商的动作枚举（绿盟 IPS 的 1/3/6/8、某 WAF 的 permit/drop/block）在
+    这里翻成平台标准词表（observe/audit/block/ban/pass/reject）；规则层
+    只认标准词表，换厂商只改这份配置。非法项（空键/空值/非 dict）丢弃。
+    """
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, dict[str, str]] = {}
+    for field_name, values in raw.items():
+        if not isinstance(values, dict):
+            continue
+        key = str(field_name).strip()[:64]
+        inner: dict[str, str] = {}
+        for raw_value, canon in values.items():
+            k = str(raw_value).strip()[:64]
+            v = str(canon).strip()[:24]
+            if k and v and k != v:
+                inner[k] = v
+        if key and inner:
+            out[key] = inner
+    return dict(list(out.items())[:8])
 
 
 def env_defaults(base: Any = None) -> PatrolConfig:

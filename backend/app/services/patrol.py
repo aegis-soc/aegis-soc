@@ -21,6 +21,7 @@ import json
 import logging
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -48,6 +49,7 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     ),
     "action": (
         "action", "act", "disposition", "action_type", "event_action", "verdict", "result",
+        "waf_action", "ips_action", "firewall_action",
     ),
     "severity": (
         "severity", "event_severity", "priority", "level", "risk_level", "threat_level",
@@ -58,30 +60,70 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     ),
     "message_id": ("_id", "message_id", "id", "gl2_message_id", "event_id"),
     "timestamp": ("timestamp", "event_time", "time", "@timestamp", "created_at"),
+    "url": ("url", "r_url", "request_uri", "uri", "http_url", "cs_uri_stem"),
+    "xff": ("xforwardedfor", "x_forwarded_for", "xff", "client_ip_forwarded"),
+    "request_type": ("l7_app_request_type", "request_type", "access_type", "auth_type"),
+    "domain": ("dst_domain", "domain", "hostname", "host"),
 }
 
+# 平台标准动作词表：巡检规则只认这六个值，厂商差异由两级机制抹平——
+# ① 数据源级 value_mapping（显式配置，如绿盟 IPS 的 1/3/6/8）；
+# ② 关键词启发兜底（无配置时按字面推断）。任何一边都不得写死厂商语义。
+ACTION_VOCABULARY = {"observe", "audit", "block", "ban", "pass", "reject", "unknown"}
+
+BAN_WORDS = {
+    "ban", "banned", "blacklist", "blacklisted", "black_list", "封禁", "拉黑", "黑名单",
+}
 BLOCK_WORDS = {
-    "block", "blocked", "deny", "denied", "drop", "dropped", "reject", "rejected",
-    "reset", "close", "closed", "阻断", "拦截", "拒绝", "封禁", "丢弃",
+    "block", "blocked", "deny", "denied", "drop", "dropped", "reset", "close", "closed",
+    "阻断", "拦截", "丢弃",
 }
+REJECT_WORDS = {"reject", "rejected", "refuse", "refused", "拒绝"}
+PASS_WORDS = {
+    "allow", "allowed", "pass", "passed", "permit", "permitted", "放行", "允许",
+}
+AUDIT_WORDS = {"audit", "审计"}
 OBSERVE_WORDS = {
-    "alert", "alerted", "allow", "allowed", "pass", "passed", "permit", "permitted",
-    "log", "logged", "monitor", "monitored", "detect", "detected", "report", "observe",
-    "放行", "告警", "记录", "监控", "允许", "检测", "观察",
+    "alert", "alerted", "log", "logged", "monitor", "monitored", "detect", "detected",
+    "report", "observe", "告警", "记录", "监控", "检测", "观察",
 }
+
+
+def normalize_action(value: str, value_map: dict[str, str] | None = None) -> str:
+    """原始动作值 → 平台标准词表。
+
+    优先查数据源级 ``value_mapping``（厂商枚举如 1/3/6/8 必须显式配置），
+    未命中走 ``classify_action`` 关键词启发；映射值不在标准词表里也原样返回，
+    让规则判定自然落空而不是悄悄改语义。
+    """
+    if value_map:
+        hit = value_map.get(str(value).strip())
+        if hit:
+            return hit
+    return classify_action(value)
 
 # L1 规则表：key -> (中文名, 权重, 说明)
 RULES: dict[str, tuple[str, int, str]] = {
-    "ips_observed": ("IPS 告警未阻断", 3, "IPS 侧 action 非阻断，攻击未被拦下"),
+    "ips_observed": ("IPS 告警未阻断", 3, "IPS 侧动作是告警/审计，攻击未被拦下"),
     "waf_observed": ("WAF 放行/仅记录", 2, "WAF 对攻击请求放行或仅记录"),
-    "ztna_burst": ("零信任认证爆破", 3, "同源认证失败次数超过阈值"),
+    "waf_reject": ("WAF 拒绝高频", 3, "同一 IP 窗口内被 WAF 多次 REJECT，建议拉黑"),
+    "bruteforce_login": ("登录爆破", 3, "同一 IP 高频访问登录页被 WAF 拒绝"),
+    "zt_multi_domain": ("零信任多域名扫描", 4, "同一 IP 窗口内访问多个不同域名，疑似扫描器"),
+    "zt_dir_scan": ("零信任目录扫描", 2, "同一 IP 大量不同 URI 与路径前缀，疑似目录爆破"),
+    "waf_spoofed": ("WAF 伪造源 IP", 2, "XForwardedFor 与来源 IP 不一致，疑似伪造"),
+    "ztna_burst": ("零信任认证爆破", 3, "同源认证重定向（redirect_auth）次数超过阈值"),
     "high_freq": ("高频访问", 2, "窗口内同源日志条数超过阈值"),
     "multi_stream": ("跨流命中", 2, "同一 IP 同时出现在两条以上日志流"),
     "intel_hit": ("情报命中", 4, "日志字段显示威胁情报 / 网监清单命中"),
 }
 
-ZTNA_FAIL_THRESHOLD = 10   # 同一 IP 在本窗口内的零信任失败次数
+ZTNA_FAIL_THRESHOLD = 10   # 同一 IP 窗口内 redirect_auth 次数
 HIGH_FREQ_THRESHOLD = 50   # 同一 IP 在本窗口内的日志条数
+WAF_REJECT_THRESHOLD = 5   # 同一 IP 窗口内 WAF REJECT 次数
+BRUTE_LOGIN_THRESHOLD = 10 # 同一 IP 窗口内登录页 REJECT 次数
+ZT_DOMAIN_THRESHOLD = 4    # 同一 IP 窗口内不同目标域名数（≥4 疑似扫描）
+DIR_SCAN_URI_THRESHOLD = 20     # 目录扫描：不同 URI 数
+DIR_SCAN_PREFIX_THRESHOLD = 15  # 目录扫描：不同路径前缀数（前两段）
 MAX_CANDIDATES = 200       # 单轮最多落库的候选 IP，防止异常日志把表撑爆
 
 DEFAULT_STREAMS: list[dict[str, str]] = [
@@ -341,15 +383,17 @@ def extract_records(payload: Any, _depth: int = 0) -> list[dict[str, Any]]:
 
 
 def classify_action(value: str) -> str:
+    """关键词启发：原始动作字符串 → 标准词表（无 value_mapping 时的兜底）。"""
     text = (value or "").strip().lower()
     if not text:
         return "unknown"
-    for word in BLOCK_WORDS:
-        if word in text:
-            return "block"
-    for word in OBSERVE_WORDS:
-        if word in text:
-            return "observe"
+    for words, canon in (
+        (BAN_WORDS, "ban"), (BLOCK_WORDS, "block"), (REJECT_WORDS, "reject"),
+        (PASS_WORDS, "pass"), (AUDIT_WORDS, "audit"), (OBSERVE_WORDS, "observe"),
+    ):
+        for word in words:
+            if word in text:
+                return canon
     return "unknown"
 
 
@@ -425,7 +469,13 @@ class Candidate:
     hits: int = 0
     streams: set[str] = field(default_factory=set)
     rule_counts: dict[str, int] = field(default_factory=dict)
-    ztna_failures: int = 0   # 零信任失败计数，达阈值才升级成规则
+    ztna_attempts: int = 0   # 零信任 redirect_auth 计数，达阈值才升级成规则
+    waf_rejects: int = 0     # WAF REJECT 计数
+    brute_logins: int = 0    # 登录页 REJECT 计数
+    zt_domains: set[str] = field(default_factory=set)   # 零信任去重域名
+    zt_uris: set[str] = field(default_factory=set)      # 零信任去重 URI
+    zt_prefixes: set[str] = field(default_factory=set)  # 零信任去重路径前缀
+    spoofed: bool = False    # XFF 与来源 IP 不一致
     severity: int = 0
     first_seen: datetime | None = None
     last_seen: datetime | None = None
@@ -449,10 +499,26 @@ class Candidate:
         ]
 
 
-def build_candidates(items: list[dict[str, Any]], window_end: datetime) -> tuple[list[Candidate], int]:
-    """把归一后的日志压成「IP -> 原因」；返回 (候选列表, 被忽略的非公网条数)。"""
+def _url_prefix(url: str) -> str:
+    """路径前缀（前两段）：/a/b/c/d?x=1 -> /a/b，用于目录扫描的「前缀数」。"""
+    path = (url or "").split("?", 1)[0].split("#", 1)[0]
+    segs = [seg for seg in path.split("/") if seg]
+    return "/" + "/".join(segs[:2]) if segs else "/"
+
+
+def build_candidates(items: list[dict[str, Any]], window_end: datetime,
+                     action_maps: dict[str, dict[str, dict[str, str]]] | None = None,
+                     ip_whitelist: set[str] | None = None,
+                     ) -> tuple[list[Candidate], int]:
+    """把归一后的日志压成「IP -> 原因」；返回 (候选列表, 被忽略的非公网条数)。
+
+    ``action_maps``：流名 → 数据源级值映射（``{"action": {"1": "observe"}}``），
+    供厂商数字枚举翻译成标准词表；``ip_whitelist``：全流共享的 IP 白名单
+    （如监控探针），命中的地址不进候选。两者都是巡检设置里的可配置项。
+    """
     bucket: dict[str, Candidate] = {}
     ignored_non_public = 0
+    whitelist = ip_whitelist or set()
 
     for record in items:
         ip_value = _first(record, FIELD_ALIASES["ip"])
@@ -466,9 +532,13 @@ def build_candidates(items: list[dict[str, Any]], window_end: datetime) -> tuple
             continue
 
         ip = check.normalized or ip_value
+        if ip_value in whitelist or ip in whitelist:
+            continue    # 白名单（监控探针等）：既不进候选也不计非公网数
         stream = str(record.get("_stream") or record.get("stream") or "").upper()
         severity = parse_severity(_first(record, FIELD_ALIASES["severity"]))
-        action = classify_action(_first(record, FIELD_ALIASES["action"]))
+        vmap = (action_maps or {}).get(stream) or {}
+        action = normalize_action(_first(record, FIELD_ALIASES["action"]),
+                                  (vmap or {}).get("action"))
         rule_name = _first(record, FIELD_ALIASES["rule"])
         seen_at = _parse_time(_first(record, FIELD_ALIASES["timestamp"]), window_end)
 
@@ -485,13 +555,37 @@ def build_candidates(items: list[dict[str, Any]], window_end: datetime) -> tuple
         if rule_name and len(candidate.samples) < 3 and rule_name not in candidate.samples:
             candidate.samples.append(rule_name[:80])
 
-        # IPS 侧"未阻断"本身就是缺口；严重度缺失（0）时也计入，只是排序靠后
-        if stream == "IPS" and action == "observe" and severity != 1 and severity != 2:
+        # IPS 侧"未拦截"（告警/审计）本身就是缺口；严重度缺失（0）时也计入
+        if stream == "IPS" and action in {"observe", "audit"} and severity not in (1, 2):
             candidate.add_rule("ips_observed")
-        if stream == "WAF" and action == "observe":
-            candidate.add_rule("waf_observed")
+        if stream == "WAF":
+            if action in {"observe", "pass"}:
+                candidate.add_rule("waf_observed")
+            elif action == "reject":
+                candidate.waf_rejects += 1
+                url_value = str(_first(record, FIELD_ALIASES["url"]) or "")
+                if "login" in url_value.lower():
+                    candidate.brute_logins += 1
+            xff = _first(record, FIELD_ALIASES["xff"])
+            if xff and not candidate.spoofed:
+                last_hop = str(xff).split(",")[-1].strip()
+                if last_hop and last_hop != ip_value:
+                    candidate.spoofed = True   # XFF 链最后一个 ≠ 直连地址 → 疑似伪造
         if stream == "ZTNA":
-            candidate.ztna_failures += 1
+            rtype = str(_first(record, FIELD_ALIASES["request_type"]) or "").strip().lower()
+            if rtype == "redirect_auth":
+                # 认证重定向才是「一次认证尝试」；网关对失败也回 200，
+                # status_code 区不了成败（2026-11-26 真机确认），这里不用它
+                candidate.ztna_attempts += 1
+            url_value = str(_first(record, FIELD_ALIASES["url"]) or "").strip()
+            domain = str(_first(record, FIELD_ALIASES["domain"]) or "").strip().lower()
+            if not domain and url_value:
+                domain = (urlparse(url_value).hostname or "").lower()
+            if domain:
+                candidate.zt_domains.add(domain)
+            if url_value:
+                candidate.zt_uris.add(url_value.split("?", 1)[0])
+                candidate.zt_prefixes.add(_url_prefix(url_value))
         if has_intel_signal(record):
             candidate.add_rule("intel_hit")
 
@@ -501,9 +595,20 @@ def build_candidates(items: list[dict[str, Any]], window_end: datetime) -> tuple
             candidate.add_rule("high_freq")
         if len(candidate.streams) >= 2:
             candidate.add_rule("multi_stream")
-        # 零信任单条不构成理由，失败次数达阈值才升级为规则
-        if candidate.ztna_failures >= ZTNA_FAIL_THRESHOLD:
-            candidate.rule_counts["ztna_burst"] = candidate.ztna_failures
+        # 计数型规则：达阈值才升级，计数值写进 rule_counts 供告警详情展示
+        if candidate.ztna_attempts >= ZTNA_FAIL_THRESHOLD:
+            candidate.rule_counts["ztna_burst"] = candidate.ztna_attempts
+        if candidate.waf_rejects >= WAF_REJECT_THRESHOLD:
+            candidate.rule_counts["waf_reject"] = candidate.waf_rejects
+        if candidate.brute_logins >= BRUTE_LOGIN_THRESHOLD:
+            candidate.rule_counts["bruteforce_login"] = candidate.brute_logins
+        if len(candidate.zt_domains) >= ZT_DOMAIN_THRESHOLD:
+            candidate.rule_counts["zt_multi_domain"] = len(candidate.zt_domains)
+        if (len(candidate.zt_uris) >= DIR_SCAN_URI_THRESHOLD
+                and len(candidate.zt_prefixes) >= DIR_SCAN_PREFIX_THRESHOLD):
+            candidate.rule_counts["zt_dir_scan"] = len(candidate.zt_uris)
+        if candidate.spoofed:
+            candidate.add_rule("waf_spoofed")
         # 一条规则都没命中（如 IPS 已阻断、单次低危访问）就不进候选，避免噪音
         if not candidate.rule_counts:
             continue
@@ -1238,7 +1343,14 @@ def run_patrol(db: Session, *, trigger: str = "cron", created_by: str = "system"
         stream_status.append(status)
 
     errors = [s for s in stream_status if s.get("error")]
-    candidates, ignored_non_public = build_candidates(records, end)
+    # 值映射与白名单按流配置下发：厂商数字枚举在这里翻译成标准词表，
+    # 监控探针等可信地址在这里排除。
+    action_maps = {s["name"]: (s.get("value_mapping") or {})
+                   for s in cfg.streams if s.get("value_mapping")}
+    ip_whitelist = {ip.strip() for s in cfg.streams
+                    for ip in (s.get("ip_whitelist") or []) if ip.strip()}
+    candidates, ignored_non_public = build_candidates(
+        records, end, action_maps=action_maps, ip_whitelist=ip_whitelist)
     apply_gates(db, candidates, now, cfg)
 
     decisions: dict[str, int] = {}

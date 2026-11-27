@@ -174,7 +174,7 @@ def probe_source(db: Session, source_code: str, minutes: int | None = None,
 
 
 UPDATABLE = {"stream_id", "query", "enabled", "required_fields", "schema_version",
-             "label", "purpose", "field_mapping"}
+             "label", "purpose", "field_mapping", "value_mapping", "ip_whitelist"}
 
 
 def update_source(db: Session, source_code: str, data: dict[str, Any],

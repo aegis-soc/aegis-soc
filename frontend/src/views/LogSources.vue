@@ -246,6 +246,51 @@
           </div>
         </el-form-item>
 
+        <el-form-item :label="t('logSources.form.valueMapping')">
+          <div class="mapping-box">
+            <div v-for="(g, gi) in form.value_mapping" :key="gi" class="mapping-group">
+              <div class="mapping-group-head">
+                <el-select
+                  v-model="g.field" filterable allow-create default-first-option
+                  :placeholder="t('logSources.form.vmField')" class="mono mapping-input"
+                >
+                  <el-option v-for="f in valueFieldOptions" :key="f" :label="f" :value="f" />
+                </el-select>
+                <el-button link type="danger" size="small"
+                           @click="form.value_mapping.splice(gi, 1)">
+                  {{ t('logSources.form.mapRemove') }}
+                </el-button>
+              </div>
+              <div v-for="(r, ri) in g.rows" :key="ri" class="mapping-row">
+                <el-input v-model="r.raw" maxlength="64" class="mono mapping-input"
+                          :placeholder="t('logSources.form.vmRaw')" />
+                <span class="mapping-arrow">→</span>
+                <el-select v-model="r.canon" filterable allow-create class="mono mapping-input"
+                           :placeholder="t('logSources.form.vmCanon')">
+                  <el-option v-for="c in ACTION_VOCAB" :key="c" :label="c" :value="c" />
+                </el-select>
+                <el-button link type="danger" size="small" @click="g.rows.splice(ri, 1)">
+                  {{ t('logSources.form.mapRemove') }}
+                </el-button>
+              </div>
+              <el-button size="small" @click="g.rows.push({ raw: '', canon: '' })">
+                + {{ t('logSources.form.vmAddValue') }}
+              </el-button>
+            </div>
+            <el-button size="small" @click="form.value_mapping.push({ field: '', rows: [{ raw: '', canon: '' }] })">
+              + {{ t('logSources.form.vmAddField') }}
+            </el-button>
+            <div class="form-hint">{{ t('logSources.form.vmHint') }}</div>
+          </div>
+        </el-form-item>
+
+        <el-form-item :label="t('logSources.form.ipWhitelist')">
+          <el-input
+            v-model="form.ip_whitelist_text" type="textarea" :rows="2" class="mono"
+            :placeholder="t('logSources.form.whitelistHint')"
+          />
+        </el-form-item>
+
         <el-form-item :label="t('logSources.form.purpose')">
           <el-checkbox-group v-model="form.purpose">
             <el-checkbox v-for="p in ['lba', 'patrol', 'soar']" :key="p" :value="p">
@@ -425,8 +470,11 @@ const verifying = ref(false)
 const drawer = reactive({ open: false, row: null, title: '' })
 const form = reactive({
   label: '', stream_id: '', query: '', schema_version: '1.0',
-  required_fields: [], field_mapping: [], purpose: [], enabled: true,
+  required_fields: [], field_mapping: [], value_mapping: [], purpose: [], enabled: true,
 })
+// 平台标准动作词表：规则只认这些值，厂商枚举在值映射里翻过来
+const ACTION_VOCAB = ['observe', 'audit', 'block', 'ban', 'pass', 'reject']
+const valueFieldOptions = ['action', 'severity', 'waf_action', 'ips_action']
 const data = reactive({ mcp: {}, items: [], summary: {}, spec: {} })
 
 // Graylog 流清单：进入下拉时懒加载一次，之后复用；「刷新清单」可强制重取。
@@ -518,6 +566,12 @@ function openEdit(row) {
   form.required_fields = [...(row.required_fields || [])]
   form.field_mapping = Object.entries(row.field_mapping || {})
     .map(([k, v]) => ({ k, v }))
+  form.value_mapping = Object.entries(row.value_mapping || {})
+    .map(([field, values]) => ({
+      field,
+      rows: Object.entries(values || {}).map(([raw, canon]) => ({ raw, canon })),
+    }))
+  form.ip_whitelist_text = (row.ip_whitelist || []).join('\n')
   form.purpose = [...(row.purpose || [])]
   form.enabled = row.enabled !== false
   drawer.open = true
@@ -675,6 +729,19 @@ async function save() {
       const v = (m.v || '').trim()
       if (k && v && k !== v) mapping[k] = v
     })
+    const value_mapping = {}
+    form.value_mapping.forEach((g) => {
+      const field = (g.field || '').trim()
+      const inner = {}
+      g.rows.forEach((r) => {
+        const raw = (r.raw || '').trim()
+        const canon = (r.canon || '').trim()
+        if (field && raw && canon && raw !== canon) inner[raw] = canon
+      })
+      if (field && Object.keys(inner).length) value_mapping[field] = inner
+    })
+    const ip_whitelist = form.ip_whitelist_text
+      .split(/[\n,]/).map((x) => x.trim()).filter(Boolean)
     await api.logSourceUpdate(drawer.row.source_code, {
       label: form.label,
       stream_id: form.stream_id.trim(),
@@ -682,6 +749,8 @@ async function save() {
       schema_version: form.schema_version.trim() || '1.0',
       required_fields: form.required_fields,
       field_mapping: mapping,
+      value_mapping,
+      ip_whitelist,
       purpose: form.purpose,
       enabled: form.enabled,
     })
@@ -907,6 +976,9 @@ onMounted(load)
 .mapping-box {
   width: 100%;
 }
+.mapping-group { border: 1px solid var(--el-border-color-lighter); border-radius: 6px; padding: 8px; margin-bottom: 8px; }
+.mapping-group-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.mapping-group-head .mapping-input { width: 220px; }
 .mapping-row {
   display: flex;
   align-items: center;

@@ -126,10 +126,20 @@ def lba_users(monkeypatch):
          },
     ]
     def fake_aggregate(db=None, cfg=None, now=None, username=None):
-        # 模拟真实聚合的 username 过滤语义
+        # 模拟真实聚合的 username 过滤语义；last_active 相对传入的 now，
+        # 避免硬编码日期随真实时间流逝变成「24h 不活跃」（时间炸弹）。
+        base = now or datetime(2026, 11, 26, 12, 0, 0)
+        shifted = []
+        for u in users:
+            u = dict(u)
+            u["last_active"] = (base - timedelta(hours=1)
+                                if u["username"] == "wangwu" else base)
+            u["devices"] = {k: dict(v, last_active=u["last_active"])
+                            for k, v in u["devices"].items()}
+            shifted.append(u)
         if username is None:
-            return list(users)
-        return [u for u in users if u["username"] == username]
+            return shifted
+        return [u for u in shifted if u["username"] == username]
 
     monkeypatch.setattr(lba, "_aggregate", fake_aggregate)
     monkeypatch.setattr(lba, "_fetch_window", lambda *a, **k: [])
