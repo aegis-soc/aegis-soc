@@ -3,7 +3,16 @@
     <el-alert v-if="LBA_MOCK" type="info" :closable="false" show-icon style="margin-bottom: 16px"
       :title="t('lba.anomaly.title')" description="演示数据（mock），非实际统计结果。接口契约见 docs/lba-api.md。" />
 
-    <el-row :gutter="16">
+    <div class="range-bar">
+      <span class="range-label">{{ t('lba.range.pick') }}</span>
+      <el-radio-group v-model="range" @change="load">
+        <el-radio-button v-for="r in LBA_RANGES" :key="r" :value="r">
+          {{ t('lba.range.' + r) }}
+        </el-radio-button>
+      </el-radio-group>
+    </div>
+
+    <el-row v-if="range" :gutter="16">
       <el-col v-for="card in kpiCards" :key="card.key" :span="6">
         <el-card shadow="never" class="kpi-card">
           <div class="kpi-num" :class="card.tone">{{ card.value }}</div>
@@ -12,10 +21,12 @@
       </el-col>
     </el-row>
 
-    <el-card shadow="never" style="margin-top: 16px">
+    <el-empty v-if="!range" :description="t('lba.range.pickHint')" />
+
+    <el-card v-else shadow="never" style="margin-top: 16px">
       <template #header>
         <div class="card-head">
-          <span>{{ t('lba.anomaly.title') }}</span>
+          <span>{{ t('lba.anomaly.title') }} · {{ t('lba.range.' + range) }}</span>
           <el-select v-model="riskFilter" clearable :placeholder="t('lba.anomaly.filterRisk')" style="width: 160px" @change="load">
             <el-option v-for="lv in ['high', 'medium', 'low']" :key="lv" :value="lv" :label="riskLabel(lv)" />
           </el-select>
@@ -54,10 +65,10 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { LBA_MOCK, lbaApi } from '../../api/lba'
+import { LBA_MOCK, LBA_RANGES, lbaApi } from '../../api/lba'
 
 const { t, te } = useI18n()
 const router = useRouter()
@@ -66,24 +77,29 @@ const overview = ref({})
 const rows = ref([])
 const loading = ref(false)
 const riskFilter = ref('')
+const range = ref('')   // 空 = 未选择：进入页面不自动打 Graylog，点按钮才取数
 
 const pick = (ns, v) => (v ? (te(`${ns}.${v}`) ? t(`${ns}.${v}`) : v) : '-')
 const riskLabel = (v) => pick('enums.risk', v)
 const riskTag = (v) => ({ high: 'danger', medium: 'warning', low: 'success' }[v] || 'info')
 
-const kpiCards = computed(() => [
-  { key: 'active', value: overview.value.active_users_24h ?? '-', label: t('lba.kpi.activeUsers'), tone: '' },
-  { key: 'devices', value: overview.value.devices_total ?? '-', label: t('lba.kpi.devices'), tone: '' },
-  { key: 'pending', value: overview.value.pending_anomaly_users ?? '-', label: t('lba.kpi.pendingUsers'), tone: 'warn' },
-  { key: 'high', value: overview.value.high_risk_users ?? '-', label: t('lba.kpi.highRiskUsers'), tone: 'danger' },
-])
+const kpiCards = computed(() => {
+  const suffix = range.value ? `（${t('lba.range.' + range.value)}）` : ''
+  return [
+    { key: 'active', value: overview.value.active_users ?? '-', label: t('lba.kpi.activeUsers') + suffix, tone: '' },
+    { key: 'devices', value: overview.value.devices_total ?? '-', label: t('lba.kpi.devices') + suffix, tone: '' },
+    { key: 'pending', value: overview.value.pending_anomaly_users ?? '-', label: t('lba.kpi.pendingUsers') + suffix, tone: 'warn' },
+    { key: 'high', value: overview.value.high_risk_users ?? '-', label: t('lba.kpi.highRiskUsers') + suffix, tone: 'danger' },
+  ]
+})
 
 async function load() {
   loading.value = true
   try {
+    if (!range.value) return
     const [ov, list] = await Promise.all([
-      lbaApi.loginOverview(),
-      lbaApi.anomalyUsers({ risk_level: riskFilter.value || undefined, page: 1, page_size: 20 }),
+      lbaApi.loginOverview(range.value),
+      lbaApi.anomalyUsers({ range: range.value, risk_level: riskFilter.value || undefined, page: 1, page_size: 20 }),
     ])
     overview.value = ov
     rows.value = list.items
@@ -91,13 +107,14 @@ async function load() {
 }
 
 function openDetail(row) {
-  router.push(`/lba/user/${encodeURIComponent(row.username)}`)
+  router.push({ path: `/lba/user/${encodeURIComponent(row.username)}`,
+                query: range.value ? { range: range.value } : {} })
 }
-
-onMounted(load)
 </script>
 
 <style scoped>
+.range-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.range-label { color: var(--el-text-color-secondary); font-size: 14px; }
 .kpi-card { text-align: center; }
 .kpi-num { font-size: 28px; font-weight: 600; line-height: 1.3; }
 .kpi-num.warn { color: #e6a23c; }

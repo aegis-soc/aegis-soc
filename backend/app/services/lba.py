@@ -37,7 +37,12 @@ logger = logging.getLogger("aegis")
 RISK_LEVELS = ("low", "medium", "high")
 UA_CLASSES = {"pc", "mobile", "tablet", "feishu", "other", "unknown"}
 
-# 窗口与限额：一次按需聚合最多回看 7 天、拉 5000 条，配合缓存控制 MCP 压力
+# 窗口与限额：页面按需选 1 小时 / 24 小时 / 7 天，点击后才取数分析；
+# 单次聚合最多拉 5000 条，配合缓存控制 MCP 压力
+RANGE_WINDOWS: dict[str, timedelta] = {
+    "1h": timedelta(hours=1), "24h": timedelta(hours=24), "7d": timedelta(days=7),
+}
+DEFAULT_RANGE = "24h"
 WINDOW_24H = timedelta(hours=24)
 WINDOW_7D = timedelta(days=7)
 FETCH_LIMIT = 5000
@@ -207,7 +212,7 @@ def _norm_records(records: list[dict[str, Any]], fallback: datetime) -> list[dic
 def _classify_risk(stats: dict[str, Any]) -> str:
     if (stats["ip_count_7d"] >= HIGH_IP_COUNT
             or stats["country_count_7d"] >= HIGH_COUNTRY_COUNT
-            or stats["fail_24h"] >= 10):
+            or stats["fails_window"] >= 10):
         return "high"
     if (stats["ip_count_7d"] >= MEDIUM_IP_COUNT
             or stats["device_count"] >= MEDIUM_DEVICE_COUNT):
@@ -216,9 +221,10 @@ def _classify_risk(stats: dict[str, Any]) -> str:
 
 
 def _aggregate(db: Session | None, cfg: PatrolConfig, now: datetime,
-               username: str | None = None) -> list[dict[str, Any]]:
-    """7d 记录 → 按用户聚合的基础统计（含设备与 IP 明细，供列表与详情共用）。"""
-    raw = _fetch_window(cfg, now - WINDOW_7D, now)
+               username: str | None = None,
+               window: timedelta = WINDOW_7D) -> list[dict[str, Any]]:
+    """窗口内记录 → 按用户聚合的基础统计（含设备与 IP 明细，供列表与详情共用）。"""
+    raw = _fetch_window(cfg, now - window, now)
     records = _norm_records(raw, now)
     if username is not None:
         records = [r for r in records if r["username"] == username]
@@ -230,17 +236,17 @@ def _aggregate(db: Session | None, cfg: PatrolConfig, now: datetime,
             continue
         user = users.setdefault(name, {
             "username": name, "display_name": "", "last_active": rec["seen_at"],
-            "requests_24h": 0, "fail_24h": 0, "ip_7d": {}, "devices": {},
+            "requests_window": 0, "fails_window": 0, "ip_7d": {}, "devices": {},
             "timeline": [],
         })
         if not user["display_name"] and rec["display_name"]:
             user["display_name"] = rec["display_name"]
         if rec["seen_at"] > user["last_active"]:
             user["last_active"] = rec["seen_at"]
-        if rec["seen_at"] >= now - WINDOW_24H:
-            user["requests_24h"] += 1
+        if rec["seen_at"] >= now - window:
+            user["requests_window"] += 1
             if rec["status_code"] in (401, 403):
-                user["fail_24h"] += 1
+                user["fails_window"] += 1
             if len(user["timeline"]) < TIMELINE_MAX:
                 user["timeline"].append(rec)
         if rec["src_ip"]:
@@ -289,38 +295,50 @@ def _device_payload(device: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------- 对外入口
-def login_overview(db: Session | None = None) -> dict[str, Any]:
+def _range_of(range_key: str | None) -> str:
+    """校验时间范围参数：``1h/24h/7d``，非法值直接 400。"""
+    key = (range_key or DEFAULT_RANGE).strip().lower()
+    if key not in RANGE_WINDOWS:
+        raise BizError(f"range 需为 {'/'.join(RANGE_WINDOWS)}", 400, 400)
+    return key
+
+
+def login_overview(db: Session | None = None, range_key: str = "") -> dict[str, Any]:
+    range_key = _range_of(range_key)
     cfg = load_config(db, base=default_settings)
+    window = RANGE_WINDOWS[range_key]
 
     def produce() -> dict[str, Any]:
         now = utcnow()
-        users = _aggregate(db, cfg, now)
-        active_24h = {u["username"] for u in users if u["last_active"] >= now - WINDOW_24H}
+        users = _aggregate(db, cfg, now, window=window)
         device_keys = {d["device_key"] for u in users for d in u["devices"].values()}
         pending = [u for u in users if u["risk"] in ("medium", "high")]
         return {
-            "active_users_24h": len(active_24h),
+            "range": range_key,
+            "active_users": len({u["username"] for u in users}),
             "devices_total": len(device_keys),
             "pending_anomaly_users": len(pending),
             "high_risk_users": len([u for u in users if u["risk"] == "high"]),
-            "window_desc": {"ip_change_days": 7},
+            "window_desc": {"window": range_key},
         }
 
-    return _cached("lba:overview", CACHE_TTL_OVERVIEW, produce)
+    return _cached(f"lba:overview:{range_key}", CACHE_TTL_OVERVIEW, produce)
 
 
 def anomaly_users(db: Session | None = None, risk_level: str = "",
-                  page: int = 1, page_size: int = 20) -> dict[str, Any]:
+                  page: int = 1, page_size: int = 20, range_key: str = "") -> dict[str, Any]:
     if risk_level and risk_level not in RISK_LEVELS:
         raise BizError(f"risk_level 需为 {'/'.join(RISK_LEVELS)} 或留空", 400, 400)
     page = max(1, page)
     page_size = min(max(1, page_size), 100)
-    key = f"lba:anomaly:{risk_level or 'all'}:{page}:{page_size}"
+    range_key = _range_of(range_key)
+    window = RANGE_WINDOWS[range_key]
+    key = f"lba:anomaly:{risk_level or 'all'}:{range_key}:{page}:{page_size}"
 
     def produce() -> dict[str, Any]:
         cfg = load_config(db, base=default_settings)
         now = utcnow()
-        users = _aggregate(db, cfg, now)
+        users = _aggregate(db, cfg, now, window=window)
         items = []
         for u in users:
             if risk_level and u["risk"] != risk_level:
@@ -347,24 +365,27 @@ def anomaly_users(db: Session | None = None, risk_level: str = "",
     return _cached(key, CACHE_TTL_OVERVIEW, produce)
 
 
-def user_profile(db: Session | None = None, username: str = "") -> dict[str, Any]:
+def user_profile(db: Session | None = None, username: str = "",
+                 range_key: str = "") -> dict[str, Any]:
     username = (username or "").strip()[:64]
     if not username:
         raise BizError("username 不能为空", 400, 400)
-    key = f"lba:profile:{username}"
+    range_key = _range_of(range_key)
+    window = RANGE_WINDOWS[range_key]
+    key = f"lba:profile:{username}:{range_key}"
 
     def produce() -> dict[str, Any]:
         cfg = load_config(db, base=default_settings)
         now = utcnow()
-        matches = _aggregate(db, cfg, now, username=username)
+        matches = _aggregate(db, cfg, now, username=username, window=window)
         if not matches:
             raise BizError(f"用户 {username} 在 7 天窗口内无行为记录", 404, 404)
         user = matches[0]
         timeline = sorted(user["timeline"], key=lambda r: r["seen_at"], reverse=True)
         return {
             "username": user["username"], "display_name": user["display_name"],
-            "risk": user["risk"],
-            "requests_24h": user["requests_24h"],
+            "range": range_key, "risk": user["risk"],
+            "requests": user["requests_window"],
             "ip_count_7d": user["ip_count_7d"],
             "country_count_7d": user["country_count_7d"],
             "device_count": user["device_count"],

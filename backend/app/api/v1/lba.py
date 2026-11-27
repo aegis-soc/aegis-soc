@@ -18,20 +18,23 @@ router = APIRouter(prefix="/lba", tags=["行为分析"])
 
 
 @router.get("/login/overview")
-def login_overview(db: Session = Depends(get_db), _=Depends(require_perms("lba:read"))):
-    return ok(lba.login_overview(db))
+def login_overview(range: str = "", db: Session = Depends(get_db),
+                   _=Depends(require_perms("lba:read"))):
+    """概览指标。``range=1h/24h/7d``：页面按钮按需触发，点击才取数分析。"""
+    return ok(lba.login_overview(db, range_key=range))
 
 
 @router.get("/login/anomaly-users")
 def anomaly_users(risk_level: str = "", page: int = 1, page_size: int = 20,
-                  db: Session = Depends(get_db), _=Depends(require_perms("lba:read"))):
+                  range: str = "", db: Session = Depends(get_db),
+                  _=Depends(require_perms("lba:read"))):
     if page < 1 or page_size < 1 or page_size > 100:
         raise BizError("page ≥ 1 且 page_size 在 1~100 之间", 400, 400)
     return ok(lba.anomaly_users(db, risk_level=risk_level.strip().lower(),
-                                page=page, page_size=page_size))
+                                page=page, page_size=page_size, range_key=range))
 
 
 @router.get("/profile/user/{username}")
-def user_profile(username: str, db: Session = Depends(get_db),
+def user_profile(username: str, range: str = "", db: Session = Depends(get_db),
                  _=Depends(require_perms("lba:read"))):
-    return ok(lba.user_profile(db, username))
+    return ok(lba.user_profile(db, username, range_key=range))

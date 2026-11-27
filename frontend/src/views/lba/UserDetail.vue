@@ -5,10 +5,13 @@
       <span class="head-name">{{ detail.username }}</span>
       <span v-if="detail.display_name" class="dim" style="margin: 0 8px">{{ detail.display_name }}</span>
       <el-tag :type="riskTag(detail.risk)">{{ riskLabel(detail.risk) }}</el-tag>
+      <el-radio-group v-model="range" size="small" style="margin-left: 16px" @change="load">
+        <el-radio-button v-for="r in LBA_RANGES" :key="r" :value="r">{{ t('lba.range.' + r) }}</el-radio-button>
+      </el-radio-group>
     </div>
 
     <el-descriptions :column="4" border style="margin-top: 14px">
-      <el-descriptions-item :label="t('lba.detail.statRequests')">{{ detail.requests_24h }}</el-descriptions-item>
+      <el-descriptions-item :label="t('lba.detail.statRequests')">{{ detail.requests }}（{{ t('lba.range.' + detail.range) }}）</el-descriptions-item>
       <el-descriptions-item :label="t('lba.detail.statIp')">{{ detail.ip_count_7d }}</el-descriptions-item>
       <el-descriptions-item :label="t('lba.detail.statCountry')">{{ detail.country_count_7d }}</el-descriptions-item>
       <el-descriptions-item :label="t('lba.detail.statDevices')">{{ detail.device_count }}</el-descriptions-item>
@@ -87,7 +90,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { lbaApi } from '../../api/lba'
+import { LBA_RANGES, lbaApi } from '../../api/lba'
 
 const { t, te } = useI18n()
 const route = useRoute()
@@ -96,6 +99,7 @@ const router = useRouter()
 const detail = ref({})
 const loading = ref(false)
 const timelineMax = 50
+const range = ref(['1h', '24h', '7d'].includes(route.query.range) ? route.query.range : '7d')
 
 const pick = (ns, v) => (v ? (te(`${ns}.${v}`) ? t(`${ns}.${v}`) : v) : '-')
 const riskLabel = (v) => pick('enums.risk', v)
@@ -111,7 +115,7 @@ const fmtTs = (ts) => {
 async function load() {
   loading.value = true
   try {
-    detail.value = await lbaApi.userProfile(route.params.username)
+    detail.value = await lbaApi.userProfile(route.params.username, range.value)
   } catch (e) { console.error('[lba] 详情取数失败:', e) /* axios 错误拦截器已提示 */ } finally { loading.value = false }
 }
 

@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### 修订：LBA 按需时间范围 + 设备类型修正（2026-11-28 真机反馈）
+- 三接口统一新增 `range=1h/24h/7d`：页面按钮按需触发，进入页面不自动打 Graylog；缓存键按 range 隔离
+- 字段随窗口语义改名：active_users / requests / fails_window，响应回显 range
+- 设备信息修正：`ua_is_pc=false` 不再写 `ua_class=other`（手机/平板被压平的根因），留空交 UA 文本派生 mobile/feishu
+- 概览/详情页新增范围切换按钮；用户详情默认沿用来源页范围
+
+
 ### 新增：巡检值映射层 + 4 条新规则（厂商动作枚举通用化，2026-11-27）
 - 数据源级 `value_mapping`：厂商动作枚举（绿盟 IPS 1/3/6/8、WAF permit/drop/block）→ 平台标准词表（observe/audit/block/ban/pass/reject）；数字枚举必须显式配置，关键词启发仅作兜底；映射值不在词表时原样返回不悄悄改语义
 - 流级 `ip_whitelist`：监控探针等可信地址不进巡检候选

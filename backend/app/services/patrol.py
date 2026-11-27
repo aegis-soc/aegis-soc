@@ -776,7 +776,10 @@ def _apply_field_mapping(records: list[dict[str, Any]],
                 if text in {"true", "1", "yes"}:
                     value = "pc"
                 elif text in {"false", "0", "no"}:
-                    value = "other"
+                    # false 只声明「不是 PC」：可能是手机/平板/终端未识别，
+                    # 写 other 会把设备类型全部压平；留空交给 UA 文本派生
+                    # （ua_class_of 会从 ua_raw 识别 mobile/feishu）。
+                    continue
             record[platform_key] = value
     return records
 

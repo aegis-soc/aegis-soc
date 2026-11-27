@@ -372,15 +372,18 @@ def test_apply_field_mapping_skips_dash_placeholder():
 
 
 def test_apply_field_mapping_converts_bool_ua_class():
-    """真机 ua_is_pc 是布尔：映射到 ua_class 时换词表 pc/other，不猜 mobile。"""
+    """真机 ua_is_pc 是布尔：映射到 ua_class 时 true→pc；false 不写值——
+    只声明「不是 PC」可能是手机/平板，写 other 会把设备类型全部压平，
+    留空交给 ua_class_of 从 UA 文本派生 mobile/feishu。"""
     records = [{"ua_is_pc": True}, {"ua_is_pc": False},
-               {"ua_is_pc": "true"}, {"ua_is_pc": "0"}]
+               {"ua_is_pc": "true"},
+               {"ua_is_pc": "0", "ua_raw": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1) Safari/605"}]
     out = patrol._apply_field_mapping(
         records, {"field_mapping": {"ua_class": "ua_is_pc"}})
     assert out[0]["ua_class"] == "pc"
-    assert out[1]["ua_class"] == "other"
+    assert "ua_class" not in out[1]                # false 不写，待派生
     assert out[2]["ua_class"] == "pc"
-    assert out[3]["ua_class"] == "other"
+    assert "ua_class" not in out[3]
 
 
 def test_request_fields_real_ztna_stream_shape():

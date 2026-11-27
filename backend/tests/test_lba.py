@@ -60,7 +60,7 @@ def test_record_username_anonymous_excluded():
 def test_classify_risk_thresholds():
     def stats(ip=1, country=1, devices=1, fail=0):
         return {"ip_count_7d": ip, "country_count_7d": country,
-                "device_count": devices, "fail_24h": fail}
+                "device_count": devices, "fails_window": fail}
     assert lba._classify_risk(stats()) == "low"
     assert lba._classify_risk(stats(ip=3)) == "medium"
     assert lba._classify_risk(stats(devices=3)) == "medium"
@@ -111,21 +111,21 @@ def lba_users(monkeypatch):
     now = datetime(2026, 11, 26, 12, 0, 0)
     users = [
         {"username": "wangwu", "display_name": "", "risk": "high", "device_count": 2, "ip_count_7d": 6,
-         "country_count_7d": 2, "fail_24h": 0, "requests_24h": 10,
+         "country_count_7d": 2, "fails_window": 0, "requests_window": 10,
          "last_active": now - timedelta(hours=1), "ip_7d": {}, "timeline": [],
          "devices": {"k1": {"device_key": "k1", "ua_class": "pc", "browser": "chrome",
                             "browser_ver": "131", "managed": "unknown", "ua_raw": "u1",
                             "last_active": now, "ips": {}}},
          },
         {"username": "lisi", "display_name": "", "risk": "low", "device_count": 1, "ip_count_7d": 1,
-         "country_count_7d": 1, "fail_24h": 0, "requests_24h": 5,
+         "country_count_7d": 1, "fails_window": 0, "requests_window": 5,
          "last_active": now, "ip_7d": {}, "timeline": [],
          "devices": {"k2": {"device_key": "k2", "ua_class": "feishu", "browser": "feishu",
                             "browser_ver": "7", "managed": "unknown", "ua_raw": "u2",
                             "last_active": now, "ips": {}}},
          },
     ]
-    def fake_aggregate(db=None, cfg=None, now=None, username=None):
+    def fake_aggregate(db=None, cfg=None, now=None, username=None, window=None):
         # 模拟真实聚合的 username 过滤语义；last_active 相对传入的 now，
         # 避免硬编码日期随真实时间流逝变成「24h 不活跃」（时间炸弹）。
         base = now or datetime(2026, 11, 26, 12, 0, 0)
@@ -150,11 +150,19 @@ def test_overview_contract(client, auth_headers, lba_users):
     resp = client.get("/api/v1/lba/login/overview", headers=auth_headers)
     assert resp.status_code == 200
     data = resp.json()["data"]
-    assert data["active_users_24h"] == 2          # 两人最近 24h 都活跃
+    assert data["range"] == "24h"                 # 默认 24h 窗口
+    assert data["active_users"] == 2
     assert data["devices_total"] == 2
     assert data["pending_anomaly_users"] == 1
     assert data["high_risk_users"] == 1
-    assert data["window_desc"] == {"ip_change_days": 7}
+    assert data["window_desc"] == {"window": "24h"}
+
+    # range 参数：1h/7d 各自缓存与窗口
+    resp = client.get("/api/v1/lba/login/overview?range=7d", headers=auth_headers)
+    assert resp.status_code == 200
+    assert resp.json()["data"]["range"] == "7d"
+    resp = client.get("/api/v1/lba/login/overview?range=bogus", headers=auth_headers)
+    assert resp.status_code == 400
 
 
 def test_anomaly_users_sort_and_filter(client, auth_headers, lba_users):
@@ -196,9 +204,9 @@ def test_cached_roundtrip(client, auth_headers, lba_users):
     """缓存命中时不重复聚合：预热后直接改缓存值，接口必须原样返回缓存内容。"""
     client.get("/api/v1/lba/login/overview", headers=auth_headers)
     from app.cache import cache
-    assert cache.get("lba:overview") is not None
-    raw = json.loads(cache.get("lba:overview"))
-    raw["active_users_24h"] = 99999
-    cache.set("lba:overview", json.dumps(raw), ex=120)
+    assert cache.get("lba:overview:24h") is not None
+    raw = json.loads(cache.get("lba:overview:24h"))
+    raw["active_users"] = 99999
+    cache.set("lba:overview:24h", json.dumps(raw), ex=120)
     second = client.get("/api/v1/lba/login/overview", headers=auth_headers).json()["data"]
-    assert second["active_users_24h"] == 99999
+    assert second["active_users"] == 99999

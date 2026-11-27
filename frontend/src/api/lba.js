@@ -151,17 +151,21 @@ function mockDetail(username) {
 // 对外接口（契约：docs/lba-api.md）
 // ---------------------------------------------------------------------------
 
+// LBA 时间范围：页面按钮按需触发（1 小时 / 24 小时 / 7 天），点击才取数分析
+export const LBA_RANGES = ['1h', '24h', '7d']
+
 export const lbaApi = {
-  loginOverview: () =>
+  loginOverview: (range = '24h') =>
     LBA_MOCK
       ? Promise.resolve({
-          active_users_24h: 2386,
+          range,
+          active_users: 2386,
           devices_total: 4820,
           pending_anomaly_users: 16,
           high_risk_users: 3,
-          window_desc: { ip_change_days: 7 },
+          window_desc: { window: range },
         })
-      : http.get('/lba/login/overview'),
+      : http.get('/lba/login/overview', { params: { range } }),
 
   anomalyUsers: (params = {}) =>
     LBA_MOCK
@@ -173,8 +177,10 @@ export const lbaApi = {
           }))
           return { items, total: items.length, page: params.page || 1, page_size: params.page_size || 20 }
         })())
-      : http.get('/lba/login/anomaly-users', { params }),
+      : http.get('/lba/login/anomaly-users', { params: { range: '24h', ...params } }),
 
-  userProfile: (username) =>
-    LBA_MOCK ? Promise.resolve(mockDetail(username)) : http.get(`/lba/profile/user/${encodeURIComponent(username)}`),
+  userProfile: (username, range = '7d') =>
+    LBA_MOCK
+      ? Promise.resolve(mockDetail(username))
+      : http.get(`/lba/profile/user/${encodeURIComponent(username)}`, { params: { range } }),
 }

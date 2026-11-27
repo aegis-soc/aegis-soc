@@ -94,6 +94,19 @@
 
 `src/api/lba.js`：`import.meta.env.DEV && VITE_LBA_MOCK !== 'false'` 时走本地 mock（生产构建永远走真实接口，`VITE_LBA_MOCK=false` 可在 dev 强制关掉）。组件内不出现任何 mock 判断。
 
+## 4.1 时间范围参数（2026-11-28 修订）
+
+三个接口统一新增 ``range=1h|24h|7d`` 查询参数（默认 ``24h``）：页面按钮
+按需触发——进入页面不自动取数，点击「近 1 小时 / 近 24 小时 / 近 7 天」
+才从 Graylog 拉该窗口的日志分析。缓存键按 range 隔离。
+
+字段随窗口语义改名：``active_users_24h → active_users``、
+``requests_24h → requests``、``fail_24h → fails_window``（窗口内计数）；
+响应新增 ``range`` 回显。用户详情页同样提供范围切换（默认 7d）。
+
+设备/用户信息修正（2026-11-28）：``ua_is_pc=false`` 不再写 ``ua_class=other``
+（会把手机/平板全部压平），留空交给 UA 文本派生 mobile/feishu/tablet。
+
 ## 5. v1 实现口径（2026-11-26 后端落地说明）
 
 后端按需从零信任流聚合（复用巡检 MCP 基建，单次最多回看 7 天 / 5000 条，
