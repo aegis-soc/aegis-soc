@@ -44,3 +44,51 @@ def test_no_config_falls_back_to_default(monkeypatch):
     monkeypatch.delenv("DB_PASSWORD", raising=False)
     assert _database_url() == \
         "mysql+pymysql://aegis:change-me@127.0.0.1:3306/aegis_soc?charset=utf8mb4"
+
+
+# ---------------------------------------------------------------- 必填字段校验
+def test_validate_required_fields_blocking():
+    from app.services.patrol_settings import validate_required_fields
+    errors, _ = validate_required_fields("ips", ["src_ip", "action"], {})
+    assert any("ts" in e for e in errors)          # 缺 ts 阻断
+    errors, _ = validate_required_fields("ips", [], {})
+    assert len(errors) == 2                        # ts + src_ip 都缺
+    errors, warnings = validate_required_fields("ips", ["ts", "src_ip"], {})
+    assert errors == []
+    assert any("action" in w for w in warnings)    # 建议项缺失仅提示
+    errors, warnings = validate_required_fields(
+        "ztna", ["ts", "src_ip", "username", "ua_class", "dst_domain"], {})
+    assert errors == []
+    assert any("l7_app_request_type" in w for w in warnings)
+
+
+def test_field_status_resolution():
+    from app.services.patrol_settings import field_status
+    stream = {"source_code": "ztna",
+              "required_fields": ["ts", "src_ip", "url", "username"],
+              "field_mapping": {"url": "request_uri"}}
+    status = {s["field"]: s for s in field_status(stream)}
+    assert status["ts"]["graylog"] == "timestamp" and status["ts"]["how"] == "alias"
+    assert status["ts"]["level"] == "blocking"
+    assert status["src_ip"]["how"] == "same" and status["src_ip"]["level"] == "blocking"
+    assert status["url"]["graylog"] == "request_uri" and status["url"]["how"] == "mapping"
+    assert status["username"]["how"] == "same" and status["username"]["level"] == "suggested"
+
+
+def test_save_rejects_missing_blocking_fields(client, auth_headers):
+    from app.database import SessionLocal
+    from app.services import patrol_settings
+    db = SessionLocal()
+    try:
+        cfg = patrol_settings.load(db)
+        streams = [dict(s) for s in cfg.streams]
+        for s in streams:
+            if s.get("source_code") == "ips":
+                s["required_fields"] = ["src_ip"]       # 故意去掉 ts
+        import pytest
+        from app.common import BizError
+        with pytest.raises(BizError) as exc:
+            patrol_settings.save(db, {"streams": streams}, operator="test")
+        assert "ts" in str(exc.value)
+    finally:
+        db.close()

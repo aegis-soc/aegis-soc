@@ -113,6 +113,7 @@ def list_sources(db: Session) -> dict[str, Any]:
         health["state"] = _state(stream, stat)
         items.append({
             **stream,
+            "field_status": patrol_settings.field_status(stream),
             "health": health,
             "configured": bool(stream.get("stream_id") or stream.get("query")),
         })

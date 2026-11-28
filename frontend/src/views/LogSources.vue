@@ -219,6 +219,19 @@
             <el-option v-for="f in fieldOptions" :key="f" :label="f" :value="f" />
           </el-select>
           <div class="form-hint">{{ t('logSources.form.requiredHint') }}</div>
+          <div v-if="missingBlocking.length" class="field-warn">
+            {{ t('logSources.form.missingBlocking', { fields: missingBlocking.join(', ') }) }}
+          </div>
+          <div v-if="fieldStatus.length" class="field-status">
+            <div v-for="st in fieldStatus" :key="st.field" class="field-chip">
+              <el-tag size="small"
+                :type="st.level === 'blocking' ? 'danger' : (st.level === 'suggested' ? 'warning' : 'info')">
+                {{ st.field }}
+              </el-tag>
+              <span class="mono">→ {{ st.graylog }}</span>
+              <span class="dim">（{{ t('logSources.form.how_' + st.how) }}）{{ st.label }}</span>
+            </div>
+          </div>
         </el-form-item>
 
         <el-form-item :label="t('logSources.form.fieldMapping')">
@@ -476,6 +489,35 @@ const form = reactive({
 const ACTION_VOCAB = ['observe', 'audit', 'block', 'ban', 'pass', 'reject']
 const valueFieldOptions = ['action', 'severity', 'waf_action', 'ips_action']
 const data = reactive({ mcp: {}, items: [], summary: {}, spec: {} })
+
+// ---- 必填字段校验（与后端 patrol_settings.validate_required_fields 同口径）----
+// 阻断项：ts/src_ip 缺失保存会被后端 400 拒绝；其余按源给出建议提示
+const BLOCKING_FIELDS = ['ts', 'src_ip']
+const SUGGESTED_BY_SOURCE = {
+  ips: ['action', 'severity'], waf: ['action', 'url'],
+  ztna: ['username', 'display_name', 'ua_class', 'dst_domain', 'l7_app_request_type'],
+}
+const FIELD_LABELS = {
+  ts: '日志时间', src_ip: '来源IP', action: '动作', severity: '级别', url: '请求路径',
+  status_code: '状态码', ua_raw: 'User-Agent', ua_class: '设备类型', username: '账号',
+  display_name: '显示名', l7_app_request_type: '请求类型', dst_domain: '目标域名',
+}
+const FIELD_ALIASES = { ts: 'timestamp', src: 'source' }   // 与后端 REQUEST_FIELD_ALIASES 同步
+
+const fieldStatus = computed(() => {
+  const mapping = Object.fromEntries((form.field_mapping || [])
+    .filter((m) => m.k && m.v).map((m) => [m.k.trim(), m.v.trim()]))
+  const suggested = SUGGESTED_BY_SOURCE[drawer.row?.source_code] || []
+  return (form.required_fields || []).map((f) => {
+    const graylog = mapping[f] || FIELD_ALIASES[f] || f
+    const how = mapping[f] ? 'mapping' : (FIELD_ALIASES[f] ? 'alias' : 'same')
+    const level = BLOCKING_FIELDS.includes(f) ? 'blocking'
+      : (suggested.includes(f) ? 'suggested' : 'optional')
+    return { field: f, graylog, how, level, label: FIELD_LABELS[f] || '' }
+  })
+})
+const missingBlocking = computed(() =>
+  BLOCKING_FIELDS.filter((f) => !(form.required_fields || []).includes(f)))
 
 // Graylog 流清单：进入下拉时懒加载一次，之后复用；「刷新清单」可强制重取。
 // 读的是 MCP 的 list_streams（服务端 /patrols/mcp/status 已封装），
@@ -990,6 +1032,25 @@ onMounted(load)
 }
 .mapping-arrow {
   color: var(--el-text-color-secondary);
+}
+.field-status {
+  width: 100%;
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.field-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.field-warn {
+  width: 100%;
+  margin-top: 6px;
+  color: var(--el-color-danger);
+  font-size: 12px;
 }
 .stream-hint {
   display: flex;

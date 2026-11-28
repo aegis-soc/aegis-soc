@@ -88,6 +88,81 @@ DEFAULT_REQUIRED = {
 }
 DEFAULT_PURPOSE = {"ztna": ["lba", "patrol"]}
 
+# ---------------------------------------------------------------- 字段契约校验
+# 平台契约字段的用途说明（数据源页展示，让「为什么必填」有据可查）
+ROLE_LABELS: dict[str, str] = {
+    "ts": "日志时间——巡检窗口、LBA 时间范围全依赖它",
+    "src_ip": "来源IP——候选判定与用户/IP 聚合的主键",
+    "action": "动作——规则判定（封禁/告警）的依据",
+    "severity": "级别——候选排序与权重",
+    "url": "请求路径——URL 类规则与时间线展示",
+    "status_code": "状态码——失败计数",
+    "ua_raw": "User-Agent——浏览器/系统识别",
+    "ua_class": "设备类型——PC/移动/飞书 分类",
+    "username": "账号——LBA 用户维度聚合（匿名不进统计）",
+    "display_name": "显示名——LBA 用户列表第二列",
+    "l7_app_request_type": "请求类型——零信任爆破判定口径（redirect_auth）",
+    "dst_domain": "目标域名——多域名扫描规则与时间线展示",
+}
+# 阻断项：任何源缺了它们巡检/LBA 直接失效，保存数据源时 400 阻断
+BLOCKING_ROLES: tuple[str, ...] = ("ts", "src_ip")
+# 建议项：缺失不阻断，但按源给出明确提示（LBA/规则会降级）
+SOURCE_SUGGESTED_ROLES: dict[str, tuple[str, ...]] = {
+    "ips": ("action", "severity"),
+    "waf": ("action", "url"),
+    "ztna": ("username", "display_name", "ua_class", "dst_domain", "l7_app_request_type"),
+}
+
+
+# 平台字段 → Graylog 原生列（与 patrol.REQUEST_FIELD_ALIASES 同步维护；
+# 本文件不反向 import patrol，避免循环依赖）
+REQUEST_FIELD_ALIASES: dict[str, str] = {"ts": "timestamp", "src": "source"}
+
+
+def resolve_field(platform_field: str, field_mapping: dict[str, str] | None) -> dict[str, str]:
+    """一个平台契约字段最终会向 Graylog 请求哪个列、以什么方式解析。"""
+    mapping = field_mapping or {}
+    if platform_field in mapping and mapping[platform_field]:
+        return {"field": platform_field, "graylog": mapping[platform_field], "how": "mapping"}
+    graylog = REQUEST_FIELD_ALIASES.get(platform_field, platform_field)
+    how = "alias" if platform_field in REQUEST_FIELD_ALIASES else "same"
+    return {"field": platform_field, "graylog": graylog, "how": how}
+
+
+def validate_required_fields(source_code: str, required_fields: list[str],
+                             field_mapping: dict[str, str] | None = None) -> tuple[list[str], list[str]]:
+    """必填字段校验：返回 (阻断错误, 建议提示)。
+
+    - 阻断：``ts``/``src_ip`` 不在 required_fields——没有时间列时间窗静默失效、
+      没有来源 IP 候选与聚合全空，这两个无论如何不能省；
+    - 建议：按源给出缺失的影响说明（如零信任流缺 username → 行为分析恒空）。
+    """
+    fields = [str(f).strip() for f in (required_fields or []) if str(f).strip()]
+    errors: list[str] = []
+    for role in BLOCKING_ROLES:
+        if role not in fields:
+            errors.append(f"缺少必填字段 {role}（{ROLE_LABELS[role]}）")
+    warnings: list[str] = []
+    for role in SOURCE_SUGGESTED_ROLES.get(source_code, ()):
+        if role not in fields:
+            warnings.append(f"建议补充 {role}：{ROLE_LABELS.get(role, role)}")
+    return errors, warnings
+
+
+def field_status(stream: dict[str, Any]) -> list[dict[str, Any]]:
+    """数据源页展示用：每个 required 字段的解析结果与状态。"""
+    mapping = stream.get("field_mapping") or {}
+    required = stream.get("required_fields") or []
+    suggested = SOURCE_SUGGESTED_ROLES.get(stream.get("source_code") or "", ())
+    out: list[dict[str, Any]] = []
+    for name in required:
+        info = resolve_field(name, mapping)
+        info["role"] = ROLE_LABELS.get(name, "")
+        info["level"] = "blocking" if name in BLOCKING_ROLES else (
+            "suggested" if name in suggested else "optional")
+        out.append(info)
+    return out
+
 
 @dataclass
 class PatrolConfig:
@@ -304,7 +379,7 @@ def public(cfg: PatrolConfig) -> dict[str, Any]:
         "mcp_tool": cfg.tool,
         "mcp_stream_tool": cfg.stream_tool,
         "mcp_args": cfg.args,
-        "streams": cfg.streams,
+        "streams": [dict(s, field_status=field_status(s)) for s in cfg.streams],
         "interval_seconds": cfg.interval,
         "overlap_seconds": cfg.overlap,
         "max_records": cfg.max_records,
@@ -369,6 +444,17 @@ def save(db: Session, data: dict[str, Any], operator: str = "system",
     row.mcp_stream_tool = stream_tool
     row.mcp_args = str(data.get("mcp_args", current.args) or "").strip()
     row.streams = normalize_streams(data.get("streams", current.streams))
+    # 必填字段校验：ts / src_ip 缺失会让时间窗与 IP 聚合静默失效，保存即阻断；
+    # 建议项缺失不阻断，但在返回的 streams.field_status 里带 level 提示
+    for stream in row.streams:
+        if not stream.get("enabled", True):
+            continue
+        errors, _warnings = validate_required_fields(
+            stream.get("source_code") or "", stream.get("required_fields") or [],
+            stream.get("field_mapping"))
+        if errors:
+            raise BizError(f"数据源「{stream.get('label') or stream.get('name')}」"
+                           + "；".join(errors), 400, 400)
     row.interval_seconds = _clamp(data.get("interval_seconds", current.interval), 60, 3600,
                                  "巡检间隔", 300)
     row.overlap_seconds = _clamp(data.get("overlap_seconds", current.overlap), 0, 600,
