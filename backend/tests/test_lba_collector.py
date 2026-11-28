@@ -168,3 +168,63 @@ def test_overview_reads_store_and_falls_back(db, client, auth_headers, monkeypat
     monkeypatch.setattr(lba.patrol, "_fetch_stream", lambda *a, **k: ([], {"fetched": 0, "error": ""}))
     resp = client.get("/api/v1/lba/login/overview?range=1h", headers=auth_headers)
     assert resp.json()["data"]["window_desc"]["source"] == "live"
+
+
+def test_device_payload_tolerates_legacy_store_rows():
+    """真机回归：老版本 store 设备 JSON 没有 ips/managed，payload 不再 KeyError。"""
+    legacy = {"device_key": "k1", "ua_class": "pc", "browser": "chrome",
+              "browser_ver": "131", "ua_raw": "u", "last_active": "2026-11-28 18:00:00"}
+    out = lba._device_payload(legacy)
+    assert out["ips"] == [] and out["managed"] == "unknown"
+    assert out["last_active"] == "2026-11-28 18:00:00"
+
+    # collector 新格式（first_seen/last_seen）与旧 ips 明细（first/last）都兼容
+    new = {**legacy, "ips": {"8.8.8.8": {"first_seen": "2026-11-28 17:00:00",
+                                         "last_seen": "2026-11-28 18:00:00",
+                                         "internal": False, "country": "美国"}}}
+    out = lba._device_payload(new)
+    assert out["ips"][0]["ip"] == "8.8.8.8" and out["ips"][0]["last_seen"] == "2026-11-28 18:00:00"
+
+
+def test_merge_stores_device_ips(db):
+    """采集器给设备记 IP 明细（用户详情页设备卡片数据源）。"""
+    base = NOW - timedelta(minutes=10)
+    recs = [_norm_rec("zhang", base, ip="8.8.8.8"),
+            _norm_rec("zhang", base + timedelta(minutes=1), ip="9.9.9.9")]
+    lba_collector.merge_records(db, recs)
+    db.flush()
+    row = db.query(LbaUserHourly).filter_by(username="zhang").one()
+    devices = lba_collector._load_json(row.devices, {})
+    ips = devices["k1"]["ips"] if "k1" in devices else next(iter(devices.values()))["ips"]
+    assert set(ips) == {"8.8.8.8", "9.9.9.9"}
+    assert ips["8.8.8.8"]["last_seen"] == lba_collector._ts_str(base)
+
+
+def test_run_collect_backfills_when_truncated(db, monkeypatch):
+    """真机回归：单次拉取被截断 → 回溯分页补拉，消除水位缺口（三窗口一样根因）。"""
+    from app.services.lba_collector import FETCH_LIMIT
+
+    calls: list[tuple[datetime, datetime]] = []
+    newest = NOW - timedelta(minutes=5)
+    older = NOW - timedelta(days=3)
+
+    def fake_fetch(client, stream, start, end, limit, cfg=None):
+        calls.append((start, end))
+        if len(calls) == 1:
+            return ([_norm_rec("zhang", newest)], {"fetched": limit, "error": ""})
+        return ([_norm_rec("zhang", older)], {"fetched": 1, "error": ""})
+
+    monkeypatch.setattr(lba_collector.patrol, "_fetch_stream", fake_fetch)
+    monkeypatch.setattr(lba_collector.patrol, "load_config", lambda db=None: None)
+    monkeypatch.setattr(lba_collector.lba, "_ztna_stream", lambda cfg: {"name": "ztna"})
+    monkeypatch.setattr(lba_collector.patrol, "build_client", lambda cfg: None)
+    monkeypatch.setattr(lba_collector.lba, "_norm_records", lambda raw, fb: raw)
+
+    result = lba_collector.run_collect(db)
+    assert len(calls) == 2                       # 第一批截断后回溯了一轮
+    assert calls[1][1] == newest - timedelta(seconds=1)   # 第二批从首批最旧时间往前
+    assert result["fetched"] == 2
+    state = db.query(LbaCollectState).filter_by(source_code="ztna").one()
+    assert state.watermark == newest             # 水位仍是最新
+    buckets = {r.bucket for r in db.query(LbaUserHourly).all()}
+    assert lba_collector._bucket_of(older) in buckets   # 老数据已入库

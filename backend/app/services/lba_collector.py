@@ -31,9 +31,11 @@ EVENTS_CAP = 200                   # 每小时桶时间线事件封顶（超出�
 KEYS_CAP = 1000                    # 每小时桶去重键封顶
 IPS_CAP = 500                      # 每小时桶 IP 明细封顶（TEXT 列 64KB，防撑爆）
 DEVICES_CAP = 100                  # 每小时桶设备明细封顶
+DEVICE_IPS_CAP = 50                # 单设备 IP 明细封顶
 DOMAINS_CAP = 200                  # 每小时桶域名计数封顶
 FETCH_LIMIT = lba.FETCH_LIMIT      # 单次拉取上限（与页面实时聚合同口径）
 FIRST_BACKFILL = timedelta(days=7)  # 首轮无水位时回填范围
+CATCHUP_ROUNDS = 10                # 单轮采集的回溯补拉轮数（被截断时向更早分页）
 
 
 def _event_key(rec: dict[str, Any]) -> str:
@@ -130,8 +132,23 @@ def _merge_group(db: Session, username: str, bucket: datetime,
         device = devices.setdefault(dkey, {
             "ua_class": rec["ua_class"], "browser": rec["browser"],
             "browser_ver": rec["browser_ver"], "ua_raw": rec["ua_raw"],
+            "managed": "unknown", "ips": {},
             "last_active": _ts_str(rec["seen_at"])})
         device["last_active"] = max(device["last_active"], _ts_str(rec["seen_at"]))
+        # 设备级 IP 明细：与实时聚合 device["ips"] 同键名（first_seen/last_seen），
+        # 用户详情页设备卡片直接复用 _device_payload 渲染
+        if rec["src_ip"]:
+            seen = _ts_str(rec["seen_at"])
+            dip = device["ips"].setdefault(rec["src_ip"], {
+                "first_seen": seen, "last_seen": seen,
+                "internal": rec["internal"], "country": rec["country"],
+                "city": rec["city"], "isp": rec["isp"]})
+            dip["first_seen"] = min(dip["first_seen"], seen)
+            dip["last_seen"] = max(dip["last_seen"], seen)
+            if len(device["ips"]) > DEVICE_IPS_CAP:
+                device["ips"] = dict(sorted(
+                    device["ips"].items(),
+                    key=lambda kv: kv[1]["last_seen"], reverse=True)[:DEVICE_IPS_CAP])
         if rec["domain"]:
             domains[rec["domain"]] = domains.get(rec["domain"], 0) + 1
 
@@ -201,7 +218,31 @@ def run_collect(db: Session, trigger: str = "cron",
     norm = lba._norm_records(records, end)
     users = merge_records(db, norm)
 
-    truncated = status.get("fetched", 0) >= FETCH_LIMIT
+    # 回溯补拉：单次取数达上限即被截断（Graylog 回的是最新一批），老数据出现
+    # 「水位缺口」且增量永远不补——预聚合表只覆盖最近几小时，页面 1h/24h/7d
+    # 三个窗口一模一样（2026-11-28 真机确认）。被截断时从本批最旧时间往前
+    # 分页补拉，单轮最多 CATCHUP_ROUNDS 次，剩余缺口由后续采集轮继续补。
+    total_fetched = len(records)
+    batch = norm
+    rounds = 0
+    while status.get("fetched", 0) >= FETCH_LIMIT and rounds < CATCHUP_ROUNDS:
+        oldest = min((r["seen_at"] for r in batch), default=None)
+        if oldest is None:
+            break
+        cursor_end = oldest - timedelta(seconds=1)
+        if cursor_end <= fetch_start:
+            break
+        records, status = patrol._fetch_stream(
+            client, stream, fetch_start, cursor_end, FETCH_LIMIT, cfg=cfg)
+        if status.get("error"):
+            logger.warning("LBA 回溯补拉失败（第 %s 轮）：%s", rounds + 1, status["error"])
+            break
+        batch = lba._norm_records(records, cursor_end)
+        merge_records(db, batch)
+        total_fetched += len(records)
+        rounds += 1
+
+    truncated = total_fetched >= FETCH_LIMIT
     if norm:
         newest = max(r["seen_at"] for r in norm)
         state.watermark = max(state.watermark, newest) if state.watermark else newest
@@ -211,12 +252,13 @@ def run_collect(db: Session, trigger: str = "cron",
         state.watermark = max(start, end - OVERLAP)
     state.last_run_at = now
     state.last_status = "ok"
-    state.fetched_total += len(records)
+    state.fetched_total += total_fetched
     state.last_message = (
-        f"fetched={len(records)} users={users} window={fetch_start:%m-%d %H:%M}~{end:%H:%M}"
-        + ("（达单次上限，可能截断）" if truncated else ""))[:250]
+        f"fetched={total_fetched} users={users} window={fetch_start:%m-%d %H:%M}~{end:%H:%M}"
+        + (f" 回溯{rounds}轮" if rounds else "")
+        + ("（仍有缺口，下轮继续补）" if truncated else ""))[:250]
     db.commit()
-    return {"fetched": len(records), "users": users,
+    return {"fetched": total_fetched, "users": users,
             "watermark": state.watermark.strftime("%Y-%m-%d %H:%M:%S"),
             "truncated": truncated, "trigger": trigger}
 

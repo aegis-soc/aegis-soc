@@ -156,7 +156,12 @@ def _ts_ms(seen_at: datetime) -> int:
     return int(seen_at.replace(tzinfo=timezone.utc).timestamp() * 1000)
 
 
-def _fmt(seen_at: datetime) -> str:
+def _fmt(seen_at: Any) -> str:
+    """时间转显示串；预聚合 JSON 里的时间已是字符串，原样返回。"""
+    if not seen_at:
+        return ""
+    if isinstance(seen_at, str):
+        return seen_at
     return seen_at.strftime("%Y-%m-%d %H:%M:%S")
 
 
@@ -355,9 +360,14 @@ def _users_from_store(db: Session, now: datetime, window: timedelta,
             entry["first"] = min(entry["first"], meta_i["first"])
             entry["last"] = max(entry["last"], meta_i["last"])
         for dkey, meta_d in devices.items():
-            if dkey not in user["devices"] or \
-                    meta_d["last_active"] > user["devices"][dkey]["last_active"]:
-                user["devices"][dkey] = {"device_key": dkey, **meta_d}
+            # last_active 统一按字符串比较（store JSON 里是字符串；缺失当最小）
+            new_la = str(meta_d.get("last_active") or "")
+            old_la = str(user["devices"].get(dkey, {}).get("last_active") or "")
+            if dkey not in user["devices"] or new_la > old_la:
+                # 老版本 store 行的设备 JSON 没有 ips/managed——补默认值，
+                # 设备卡片 payload 才能安全渲染（KeyError 'ips' 修复）
+                user["devices"][dkey] = {
+                    "device_key": dkey, "managed": "unknown", "ips": {}, **meta_d}
 
     result: list[dict[str, Any]] = []
     for user in users.values():
@@ -403,18 +413,34 @@ def _collect_users(db: Session | None, cfg: PatrolConfig, now: datetime,
 
 
 def _device_payload(device: dict[str, Any]) -> dict[str, Any]:
-    ips = sorted(device["ips"].items(), key=lambda kv: kv[1]["last_seen"], reverse=True)
+    """设备卡片 payload。
+
+    双来源容忍：实时聚合与预聚合（store）产出的设备字典键不完全一致——
+    老版本 store 行甚至没有 ips/managed（2026-11-28 真机 KeyError 'ips'），
+    全部 .get 兜底；IP 明细时间键名兼容 first_seen/last_seen 与 first/last。
+    """
+    raw_ips = device.get("ips") or {}
+
+    def _ip_sort(item: tuple[str, dict[str, Any]]) -> str:
+        meta = item[1]
+        return str(meta.get("last_seen") or meta.get("last") or "")
+
+    ips = sorted(raw_ips.items(), key=_ip_sort, reverse=True)
     return {
-        "device_key": device["device_key"], "ua_class": device["ua_class"],
-        "browser": device["browser"], "browser_ver": device["browser_ver"],
-        "managed": device["managed"], "ua_raw": device["ua_raw"],
-        "last_active": _fmt(device["last_active"]),
+        "device_key": device.get("device_key") or "",
+        "ua_class": device.get("ua_class") or "",
+        "browser": device.get("browser") or "",
+        "browser_ver": device.get("browser_ver") or "",
+        "managed": device.get("managed") or "unknown",
+        "ua_raw": device.get("ua_raw") or "",
+        "last_active": _fmt(device.get("last_active")),
         "ips": [{
-            "ip": ip, "internal": meta.get("internal", False),
-            "country": ("内网" if meta.get("internal") else None) or meta["country"] or "未知",
-            "city": "" if meta.get("internal") else (meta["city"] or ""),
-            "isp": meta["isp"] or "", "first_seen": _fmt(meta["first_seen"]),
-            "last_seen": _fmt(meta["last_seen"]),
+            "ip": ip, "internal": bool(meta.get("internal")),
+            "country": ("内网" if meta.get("internal") else None) or (meta.get("country") or "未知"),
+            "city": "" if meta.get("internal") else (meta.get("city") or ""),
+            "isp": meta.get("isp") or "",
+            "first_seen": _fmt(meta.get("first_seen") or meta.get("first")),
+            "last_seen": _fmt(meta.get("last_seen") or meta.get("last")),
         } for ip, meta in ips],
     }
 
@@ -537,7 +563,8 @@ def user_profile(db: Session | None = None, username: str = "",
             "timeline": entries,
             "devices": [_device_payload(d) for d in
                         sorted(user["devices"].values(),
-                               key=lambda d: d["last_active"], reverse=True)],
+                               key=lambda d: str(d.get("last_active") or ""),
+                               reverse=True)],
             "risk_history": [],            # 事件引擎未落地，v1 恒空
         }
 
