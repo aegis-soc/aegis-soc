@@ -92,3 +92,22 @@ def test_save_rejects_missing_blocking_fields(client, auth_headers):
         assert "ts" in str(exc.value)
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------- 老库升级补表
+def test_create_missing_tables_recreates_dropped(client, auth_headers):
+    """模拟老库缺新表（lba_collect_state 被删）→ bootstrap 补建，500 根因回归。"""
+    from sqlalchemy import text
+
+    from app.bootstrap import _create_missing_tables
+    from app.database import engine
+
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS lba_collect_state"))
+        conn.execute(text("DROP TABLE IF EXISTS lba_user_hourly"))
+
+    _create_missing_tables()
+
+    with engine.connect() as conn:
+        names = {r[0] for r in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))}
+    assert "lba_collect_state" in names and "lba_user_hourly" in names

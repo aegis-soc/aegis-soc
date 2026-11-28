@@ -16,7 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.database import SessionLocal, init_db
+from app.database import Base, SessionLocal, engine, init_db
 from app.models import (
     AutomationPolicy,
     DeviceCapability,
@@ -89,6 +89,17 @@ def _wait_for_tables(max_retries: int = 30, interval: float = 2.0) -> None:
         "请检查 MySQL 容器状态、.env 的 MYSQL_PASSWORD 与 DATABASE_URL 是否一致、"
         "密码特殊字符是否已 URL 编码"
     )
+
+
+def _create_missing_tables() -> None:
+    """为老库补建新版本新增的表（幂等；不修改已存在表）。
+
+    注意：这解决「新增表」的升级场景。「已有表加列」仍需手工迁移或重建——
+    create_all 不会给旧表补列。
+    """
+    from app import models  # noqa: F401  确保全部模型注册到 Base.metadata
+
+    Base.metadata.create_all(bind=engine)
 
 
 def _get_or_create(db: Session, model: type, *, lookup: dict[str, Any], defaults: dict[str, Any]) -> Any:
@@ -244,6 +255,10 @@ def run_bootstrap() -> None:
         init_db()
     else:
         _wait_for_tables()
+        # 老库升级补表：create_all 幂等（只建缺失表，不动已有表结构与数据）。
+        # 新版本新增的表若只写在 sql/init.sql 里，老库永远赶不上——
+        # lba_collect_state 缺失曾导致巡检/行为分析页整体 500。
+        _create_missing_tables()
 
     with SessionLocal() as db:
         for role in ROLES:
