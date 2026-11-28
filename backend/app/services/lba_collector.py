@@ -29,6 +29,9 @@ logger = logging.getLogger("aegis")
 OVERLAP = timedelta(minutes=2)     # 两轮采集窗口重叠，兜住迟到/边界重复
 EVENTS_CAP = 200                   # 每小时桶时间线事件封顶（超出丢最旧）
 KEYS_CAP = 1000                    # 每小时桶去重键封顶
+IPS_CAP = 500                      # 每小时桶 IP 明细封顶（TEXT 列 64KB，防撑爆）
+DEVICES_CAP = 100                  # 每小时桶设备明细封顶
+DOMAINS_CAP = 200                  # 每小时桶域名计数封顶
 FETCH_LIMIT = lba.FETCH_LIMIT      # 单次拉取上限（与页面实时聚合同口径）
 FIRST_BACKFILL = timedelta(days=7)  # 首轮无水位时回填范围
 
@@ -59,6 +62,21 @@ def _ts_str(value: datetime) -> str:
     """JSON 里存的时间统一成 %Y-%m-%d %H:%M:%S 字符串：格式固定，字典序即时间序，
     第二轮合并从 JSON 读回后可直接 min/max 比较（datetime 与 str 混比会崩）。"""
     return value.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _cap_by(mapping: dict[str, Any], cap: int) -> dict[str, Any]:
+    """dict 明细按「最后活跃时间」倒序保留前 cap 条（ips/devices 用 last，domains 用计数）。"""
+    if len(mapping) <= cap:
+        return mapping
+
+    def sort_key(item: tuple[str, Any]) -> Any:
+        value = item[1]
+        if isinstance(value, dict):
+            return value.get("last") or value.get("last_active") or ""
+        return value          # domains 的 value 是计数
+
+    kept = sorted(mapping.items(), key=sort_key, reverse=True)[:cap]
+    return dict(kept)
 
 
 def _merge_group(db: Session, username: str, bucket: datetime,
@@ -127,9 +145,11 @@ def _merge_group(db: Session, username: str, bucket: datetime,
         sorted(events, key=lambda e: e["ts"], reverse=True)[:EVENTS_CAP],
         ensure_ascii=False, default=str)
     row.event_keys = json.dumps(keys[-KEYS_CAP:], ensure_ascii=False)
-    row.ips = json.dumps(ips, ensure_ascii=False, default=str)
-    row.devices = json.dumps(devices, ensure_ascii=False, default=str)
-    row.domains = json.dumps(domains, ensure_ascii=False)
+    # 明细列有封顶：TEXT 上限 64KB，重度用户（NAT 出口等）一小时也可能出几百 IP，
+    # 超限写入会让整轮采集失败——按最近活跃保留 N 条，聚合层 union 不受影响
+    row.ips = json.dumps(_cap_by(ips, IPS_CAP), ensure_ascii=False, default=str)
+    row.devices = json.dumps(_cap_by(devices, DEVICES_CAP), ensure_ascii=False, default=str)
+    row.domains = json.dumps(_cap_by(domains, DOMAINS_CAP), ensure_ascii=False)
     row.last_active = max(row.last_active, last_active)
     if not row.display_name:
         for rec in group:

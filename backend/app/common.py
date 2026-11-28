@@ -96,4 +96,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(Exception)
     async def _unhandled(_: Request, exc: Exception) -> JSONResponse:
         logger.exception("unhandled error: %s", exc)
-        return fail("服务内部异常，请查看日志", 500, 500)
+        # 消息里带异常类名+摘要：内部运维平台，前端 toast 直接可见错因，
+        # 不必每次都先翻容器日志；敏感内容（如连接串密码）靠截断+日志级别兜底
+        brief = f"{exc.__class__.__name__}: {exc}"[:200]
+        return fail(f"服务内部异常：{brief}", 500, 500)
