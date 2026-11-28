@@ -21,6 +21,12 @@
       </el-col>
     </el-row>
 
+    <div v-if="range && windowDesc.fetched !== undefined" class="window-desc">
+      {{ t('lba.windowDesc', {
+        start: windowDesc.window_start || '-', end: windowDesc.window_end || '-',
+        n: windowDesc.fetched, first: windowDesc.data_first_seen || '-', last: windowDesc.data_last_seen || '-' }) }}
+    </div>
+
     <el-empty v-if="!range" :description="t('lba.range.pickHint')" />
 
     <el-card v-else shadow="never" style="margin-top: 16px">
@@ -79,6 +85,8 @@ const loading = ref(false)
 const riskFilter = ref('')
 const range = ref('')   // 空 = 未选择：进入页面不自动打 Graylog，点按钮才取数
 
+const windowDesc = computed(() => overview.value.window_desc || {})
+
 const pick = (ns, v) => (v ? (te(`${ns}.${v}`) ? t(`${ns}.${v}`) : v) : '-')
 const riskLabel = (v) => pick('enums.risk', v)
 const riskTag = (v) => ({ high: 'danger', medium: 'warning', low: 'success' }[v] || 'info')
@@ -116,6 +124,7 @@ function openDetail(row) {
 .range-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
 .range-label { color: var(--el-text-color-secondary); font-size: 14px; }
 .kpi-card { text-align: center; }
+.window-desc { color: #909399; font-size: 12px; margin: 8px 4px 0; }
 .kpi-num { font-size: 28px; font-weight: 600; line-height: 1.3; }
 .kpi-num.warn { color: #e6a23c; }
 .kpi-num.danger { color: #f56c6c; }

@@ -4,6 +4,7 @@ export default {
     pickHint: '请选择时间范围（近 1 小时 / 近 24 小时 / 近 7 天）后开始分析——点击才从 Graylog 取数，避免进入页面就打全量查询',
     '1h': '近 1 小时', '24h': '近 24 小时', '7d': '近 7 天',
   },
+  windowDesc: '统计窗口 {start} ~ {end} · 取回 {n} 条 · 数据跨度 {first} ~ {last}',
   kpi: {
     activeUsers: '今日活跃用户',
     devices: '识别设备数量',

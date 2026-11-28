@@ -6,19 +6,31 @@
 
 ## 1. 登录行为分析中心
 
-### GET /lba/login/overview
+### GET /lba/login/overview?range=1h|24h|7d
+
+`range` 可空（默认 `24h`），非法值返回 400。响应字段按所选窗口统计：
 
 ```json
 {
-  "active_users_24h": 2386,
-  "devices_total": 4820,
-  "pending_anomaly_users": 16,
-  "high_risk_users": 3,
-  "window_desc": { "ip_change_days": 7 }
+  "range": "24h",
+  "active_users": 87,
+  "devices_total": 89,
+  "pending_anomaly_users": 0,
+  "high_risk_users": 0,
+  "requests_total": 12653,
+  "window_desc": {
+    "window": "24h",
+    "window_start": "2026-11-27 18:30:00",
+    "window_end": "2026-11-28 18:30:00",
+    "fetched": 12653,
+    "records": 12653,
+    "data_first_seen": "2026-11-27 18:42:11",
+    "data_last_seen": "2026-11-28 18:29:57"
+  }
 }
 ```
 
-口径：`active_users_24h` = 24h 内 distinct username；`devices_total` = `lba_device` 累计数；`pending_anomaly_users` = 存在未处置中/高风险事件的用户数；`high_risk_users` = 当前风险等级为 high 的用户数。
+口径：`active_users` = 窗口内 distinct username；`devices_total` = 窗口内去重设备指纹数（无累计表，v1 降级口径）；`pending_anomaly_users` = 窗口内中/高风险用户数；`requests_total` = 窗口内总请求量。`window_desc` 是取数诊断：`fetched/records` 为实际从 Graylog 取回并参与聚合的条数，`data_first_seen/data_last_seen` 为数据自身时间跨度——三个窗口结果接近时先看它：跨度 < 窗口说明日志本身就只有这么久（流刚接入），跨度异常则查时间字段映射。
 
 ### GET /lba/login/anomaly-users?risk_level=&page=&page_size=
 

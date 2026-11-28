@@ -57,6 +57,19 @@ def test_record_username_anonymous_excluded():
     assert lba._record_username({}) is None
 
 
+def test_norm_records_time_alias_fallback(monkeypatch):
+    """时间列不是 timestamp/ts（如 event_time、自定义映射列）时仍能解析，
+    不允许全部记录被兜底成「当前时间」——否则三个时间窗口数据一模一样。"""
+    now = datetime(2026, 11, 26, 12, 0, 0)
+    rec = _rec("zhang", ts=now - timedelta(hours=3))
+    rec.pop("timestamp")
+    rec["event_time"] = (now - timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    monkeypatch.setattr(lba.geoip, "lookup", lambda ip: None)
+    out = lba._norm_records([rec], now)
+    seen = out[0]["seen_at"]
+    assert seen < now - timedelta(hours=2)        # 解析到了 3 小时前，不是 now 兜底
+
+
 def test_classify_risk_thresholds():
     def stats(ip=1, country=1, devices=1, fail=0):
         return {"ip_count_7d": ip, "country_count_7d": country,
@@ -93,7 +106,7 @@ def test_aggregate_internal_ip_not_counted(monkeypatch):
         r["display_name"] = "张三"
     monkeypatch.setattr(lba, "_fetch_window", lambda *a, **k: recs)
     monkeypatch.setattr(lba.geoip, "lookup", lambda ip: None)
-    users = lba._aggregate(None, None, now)
+    users, meta = lba._aggregate(None, None, now)
     u = users[0]
     assert u["ip_count_7d"] == 2                 # 只算公网，内网 3 个不计
     assert u["country_count_7d"] == 0
@@ -138,8 +151,10 @@ def lba_users(monkeypatch):
                             for k, v in u["devices"].items()}
             shifted.append(u)
         if username is None:
-            return shifted
-        return [u for u in shifted if u["username"] == username]
+            return shifted, {"fetched": 2, "records": 2, "data_first_seen": base,
+                             "data_last_seen": base}
+        return [u for u in shifted if u["username"] == username], {
+            "fetched": 1, "records": 1, "data_first_seen": base, "data_last_seen": base}
 
     monkeypatch.setattr(lba, "_aggregate", fake_aggregate)
     monkeypatch.setattr(lba, "_fetch_window", lambda *a, **k: [])
@@ -155,7 +170,12 @@ def test_overview_contract(client, auth_headers, lba_users):
     assert data["devices_total"] == 2
     assert data["pending_anomaly_users"] == 1
     assert data["high_risk_users"] == 1
-    assert data["window_desc"] == {"window": "24h"}
+    assert data["requests_total"] == 15           # 10 + 5
+    desc = data["window_desc"]
+    assert desc["window"] == "24h"
+    assert desc["fetched"] == 2 and desc["records"] == 2
+    assert desc["window_start"] and desc["window_end"]
+    assert desc["data_first_seen"] and desc["data_last_seen"]
 
     # range 参数：1h/7d 各自缓存与窗口
     resp = client.get("/api/v1/lba/login/overview?range=7d", headers=auth_headers)

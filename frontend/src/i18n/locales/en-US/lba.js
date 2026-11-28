@@ -4,6 +4,7 @@ export default {
     pickHint: 'Pick a window (1 hour / 24 hours / 7 days) to start the analysis — data is fetched from Graylog only after clicking, avoiding heavy queries on page enter',
     '1h': 'Last hour', '24h': 'Last 24 hours', '7d': 'Last 7 days',
   },
+  windowDesc: 'Window {start} ~ {end} · fetched {n} records · data span {first} ~ {last}',
   kpi: {
     activeUsers: 'Active users today',
     devices: 'Devices identified',

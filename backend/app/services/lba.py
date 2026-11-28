@@ -179,8 +179,12 @@ def _norm_records(records: list[dict[str, Any]], fallback: datetime) -> list[dic
     out: list[dict[str, Any]] = []
     for record in records:
         ip_value = str(patrol._first(record, patrol.FIELD_ALIASES["ip"]) or "").strip()
-        seen_at = patrol._parse_time(
-            str(record.get("timestamp") or record.get("ts") or ""), fallback)
+        # 时间列与巡检同口径：先看平台字段 ts，再按别名表兜底（event_time/@timestamp/…）。
+        # 只认 timestamp 一个名字时，真机流时间列稍有出入，全部记录都会被打上
+        # 「当前时间」兜底——三个时间窗口的数据就会一模一样（2026-11-28 排查）。
+        time_text = str(record.get("ts") or "") or patrol._first(
+            record, patrol.FIELD_ALIASES["timestamp"])
+        seen_at = patrol._parse_time(time_text, fallback)
         ua = parse_ua(record.get("ua_raw"))
         try:
             status_code = int(str(record.get("status_code") or "").strip() or 0)
@@ -222,10 +226,20 @@ def _classify_risk(stats: dict[str, Any]) -> str:
 
 def _aggregate(db: Session | None, cfg: PatrolConfig, now: datetime,
                username: str | None = None,
-               window: timedelta = WINDOW_7D) -> list[dict[str, Any]]:
-    """窗口内记录 → 按用户聚合的基础统计（含设备与 IP 明细，供列表与详情共用）。"""
+               window: timedelta = WINDOW_7D) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """窗口内记录 → 按用户聚合的基础统计（含设备与 IP 明细，供列表与详情共用）。
+
+    返回 ``(users, meta)``：meta 带取数诊断信息（取回条数、数据时间跨度），
+    供前端展示「实际统计范围」，三个窗口数据一样时一眼能看出是窗口没生效
+    还是日志本身跨度就短。
+    """
     raw = _fetch_window(cfg, now - window, now)
     records = _norm_records(raw, now)
+    meta: dict[str, Any] = {
+        "fetched": len(raw), "records": len(records),
+        "data_first_seen": min((r["seen_at"] for r in records), default=None),
+        "data_last_seen": max((r["seen_at"] for r in records), default=None),
+    }
     if username is not None:
         records = [r for r in records if r["username"] == username]
     users: dict[str, dict[str, Any]] = {}
@@ -274,7 +288,7 @@ def _aggregate(db: Session | None, cfg: PatrolConfig, now: datetime,
         user["ip_count_7d"] = len(public_ips)
         user["country_count_7d"] = len({v["country"] for v in public_ips.values() if v["country"]})
         user["risk"] = _classify_risk(user)
-    return list(users.values())
+    return list(users.values()), meta
 
 
 def _device_payload(device: dict[str, Any]) -> dict[str, Any]:
@@ -310,7 +324,7 @@ def login_overview(db: Session | None = None, range_key: str = "") -> dict[str, 
 
     def produce() -> dict[str, Any]:
         now = utcnow()
-        users = _aggregate(db, cfg, now, window=window)
+        users, meta = _aggregate(db, cfg, now, window=window)
         device_keys = {d["device_key"] for u in users for d in u["devices"].values()}
         pending = [u for u in users if u["risk"] in ("medium", "high")]
         return {
@@ -319,7 +333,14 @@ def login_overview(db: Session | None = None, range_key: str = "") -> dict[str, 
             "devices_total": len(device_keys),
             "pending_anomaly_users": len(pending),
             "high_risk_users": len([u for u in users if u["risk"] == "high"]),
-            "window_desc": {"window": range_key},
+            "requests_total": sum(u["requests_window"] for u in users),
+            "window_desc": {
+                "window": range_key,
+                "window_start": _fmt(now - window), "window_end": _fmt(now),
+                "fetched": meta["fetched"], "records": meta["records"],
+                "data_first_seen": _fmt(meta["data_first_seen"]) if meta["data_first_seen"] else "",
+                "data_last_seen": _fmt(meta["data_last_seen"]) if meta["data_last_seen"] else "",
+            },
         }
 
     return _cached(f"lba:overview:{range_key}", CACHE_TTL_OVERVIEW, produce)
@@ -338,7 +359,7 @@ def anomaly_users(db: Session | None = None, risk_level: str = "",
     def produce() -> dict[str, Any]:
         cfg = load_config(db, base=default_settings)
         now = utcnow()
-        users = _aggregate(db, cfg, now, window=window)
+        users, _meta = _aggregate(db, cfg, now, window=window)
         items = []
         for u in users:
             if risk_level and u["risk"] != risk_level:
@@ -377,9 +398,9 @@ def user_profile(db: Session | None = None, username: str = "",
     def produce() -> dict[str, Any]:
         cfg = load_config(db, base=default_settings)
         now = utcnow()
-        matches = _aggregate(db, cfg, now, username=username, window=window)
+        matches, _meta = _aggregate(db, cfg, now, username=username, window=window)
         if not matches:
-            raise BizError(f"用户 {username} 在 7 天窗口内无行为记录", 404, 404)
+            raise BizError(f"用户 {username} 在所选时间范围内无行为记录", 404, 404)
         user = matches[0]
         timeline = sorted(user["timeline"], key=lambda r: r["seen_at"], reverse=True)
         return {
