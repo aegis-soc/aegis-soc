@@ -198,6 +198,7 @@ def _norm_records(records: list[dict[str, Any]], fallback: datetime) -> list[dic
             "src_ip": ip_value,
             "seen_at": seen_at,
             "url": str(record.get("url") or "")[:255],
+            "domain": str(patrol._first(record, patrol.FIELD_ALIASES["domain"]) or "")[:255],
             "method": str(record.get("method") or "").upper()[:8],
             "status_code": status_code,
             "app_id": str(record.get("app_id") or ""),
@@ -412,6 +413,7 @@ def user_profile(db: Session | None = None, username: str = "",
             "device_count": user["device_count"],
             "timeline": [{
                 "ts": _ts_ms(r["seen_at"]), "app_id": r["app_id"], "url": r["url"],
+                "domain": r["domain"],
                 "method": r["method"], "status_code": r["status_code"], "src_ip": r["src_ip"],
             } for r in timeline],
             "devices": [_device_payload(d) for d in

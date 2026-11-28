@@ -69,6 +69,7 @@
 
   "timeline": [
     { "ts": 1763720465000, "app_id": "app-finance", "url": "/api/report/list",
+      "domain": "oa.xx.com",
       "method": "GET", "status_code": 200, "src_ip": "1.2.3.4" }
   ],
 

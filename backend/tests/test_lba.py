@@ -14,13 +14,13 @@ from app.services import lba
 
 
 def _rec(username, ip="1.2.3.4", ts=None, ua=None, url="/api/x", status=200,
-         method="GET", ua_class=""):
+         method="GET", ua_class="", domain=""):
     ts = ts or datetime(2026, 11, 26, 12, 0, 0)
     return {
         "username": username, "src_ip": ip, "timestamp": ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "url": url, "method": method, "status_code": status,
         "ua_raw": ua or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0",
-        "ua_class": ua_class,
+        "ua_class": ua_class, "dst_domain": domain,
     }
 
 
@@ -68,6 +68,19 @@ def test_norm_records_time_alias_fallback(monkeypatch):
     out = lba._norm_records([rec], now)
     seen = out[0]["seen_at"]
     assert seen < now - timedelta(hours=2)        # 解析到了 3 小时前，不是 now 兜底
+
+
+def test_norm_records_domain_extraction(monkeypatch):
+    """时间线需要 dst_domain（零信任网关字段，如 oa.xx.com），走别名表兜底。"""
+    now = datetime(2026, 11, 26, 12, 0, 0)
+    monkeypatch.setattr(lba.geoip, "lookup", lambda ip: None)
+    rec = _rec("zhang", domain="oa.xx.com")
+    assert lba._norm_records([rec], now)[0]["domain"] == "oa.xx.com"
+    alt = _rec("zhang")
+    alt.pop("dst_domain")
+    alt["domain"] = "mail.xx.com"                 # 别名兜底：domain 命名也认
+    assert lba._norm_records([alt], now)[0]["domain"] == "mail.xx.com"
+    assert lba._norm_records([_rec("zhang")], now)[0]["domain"] == ""
 
 
 def test_classify_risk_thresholds():

@@ -26,6 +26,7 @@
             <el-tag size="small" :type="ev.status_code < 400 ? 'success' : 'danger'" style="margin-right: 8px">{{ ev.status_code }}</el-tag>
             <el-tag size="small" type="info" style="margin-right: 8px">{{ ev.app_id }}</el-tag>
             <span class="mono">{{ ev.method }}</span>
+            <span v-if="ev.domain" class="mono domain">{{ ev.domain }}</span>
             <span class="mono url">{{ ev.url }}</span>
             <span class="dim">· {{ ev.src_ip }}</span>
           </el-timeline-item>
@@ -137,6 +138,7 @@ onMounted(load)
 .device-head { display: flex; align-items: center; gap: 8px; }
 .device-browser { font-weight: 500; }
 .mono { font-family: Consolas, Monaco, monospace; font-size: 12px; }
+.domain { color: #67c23a; margin-left: 6px; }
 .url { color: #409eff; margin-left: 6px; }
 .dim { color: #909399; font-size: 12px; }
 .ua { margin-top: 8px; word-break: break-all; }
