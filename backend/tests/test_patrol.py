@@ -364,3 +364,16 @@ def test_api_run_latest_and_list(client, auth_headers, monkeypatch):
     listing = client.get("/api/v1/patrols", headers=auth_headers).json()["data"]
     assert listing["total"] == 1
     assert listing["mode"] == "dry-run"
+
+
+def test_zt_domain_derived_from_url_when_dst_domain_missing():
+    """真机回归：dst_domain 缺失时从 request_uri 派生域名（NameError 修复）。"""
+    now = utcnow()
+    items = []
+    for i in range(4):
+        item = _zt("45.33.20.60", domain="", url=f"http://oa{i}.xx.com/h/x", i=i)
+        item.pop("dst_domain", None)   # 模拟该字段不存在
+        items.append(item)
+    candidates, _ = patrol.build_candidates(items, now)
+    assert candidates[0].rule_counts["zt_multi_domain"] == 4
+    assert len(candidates[0].zt_domains) == 4   # 全部从 URL 派生，非 dst_domain

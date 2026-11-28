@@ -580,7 +580,7 @@ def build_candidates(items: list[dict[str, Any]], window_end: datetime,
             url_value = str(_first(record, FIELD_ALIASES["url"]) or "").strip()
             domain = str(_first(record, FIELD_ALIASES["domain"]) or "").strip().lower()
             if not domain and url_value:
-                domain = (urlparse(url_value).hostname or "").lower()
+                domain = (urllib.parse.urlparse(url_value).hostname or "").lower()
             if domain:
                 candidate.zt_domains.add(domain)
             if url_value:
