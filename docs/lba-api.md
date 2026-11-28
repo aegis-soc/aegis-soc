@@ -97,7 +97,24 @@
 }
 ```
 
-约定：`timeline` 按时间倒序、默认最近 24h、最多 200 条；`devices.ips` 按 `last_seen` 倒序；`risk_history` 按时间倒序、`reason` 是条件命中值快照文本。
+约定：`timeline` 按时间倒序、窗口内最多 200 条（含 `domain`）；`devices.ips` 按 `last_seen` 倒序；`risk_history` 按时间倒序、`reason` 是条件命中值快照文本。
+
+## 2.1 数据来源（lba-collector 预聚合）
+
+三个查询接口统一走「采集库优先」：Beat 每 5 分钟跑 `aegis.run_lba_collect`，把零信任流增量预聚合到 `lba_user_hourly`（用户×小时：请求数/失败数/IP·设备·域名明细/时间线快照，事件键去重）；采集器健康（15 分钟内跑过）时接口读本地表秒开，未运行/刚部署时自动回落实时聚合。`overview.window_desc.source` 标明当次来源（`store` / `live`）。
+
+### GET /lba/collect/status
+
+```json
+{
+  "configured": true, "source": "ztna", "rows": 1421,
+  "watermark": "2026-11-28 18:45:00",
+  "last_run_at": "2026-11-28 18:46:12",
+  "last_status": "ok",
+  "last_message": "fetched=231 users=41 window=11-28 18:39~18:46",
+  "fetched_total": 91234
+}
+```
 
 ## 3. 后续接口（本契约下一版补全响应结构）
 

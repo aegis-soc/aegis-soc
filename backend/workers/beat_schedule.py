@@ -31,4 +31,11 @@ def build_beat_schedule() -> dict[str, Any]:
             "schedule": 60.0,
             "options": {"queue": "aegis"},
         },
+        # LBA 行为分析采集器：每 5 分钟增量预聚合零信任日志到 MySQL，
+        # 页面读本地表秒开；采集器未运行时页面自动回落实时聚合
+        "lba-collect-every-5-minutes": {
+            "task": "aegis.run_lba_collect",
+            "schedule": 300.0,
+            "options": {"queue": "aegis"},
+        },
     }

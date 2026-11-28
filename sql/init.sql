@@ -492,3 +492,40 @@ CREATE TABLE IF NOT EXISTS `system_setting` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_setting_key` (`skey`)
 ) ENGINE=InnoDB COMMENT='系统运行期配置';
+
+-- LBA 登录行为分析：用户 × 小时预聚合（lba-collector 每 5 分钟增量合并）
+CREATE TABLE IF NOT EXISTS `lba_user_hourly` (
+  `id`           BIGINT       NOT NULL AUTO_INCREMENT,
+  `username`     VARCHAR(64)  NOT NULL COMMENT '账号（匿名词不落库）',
+  `display_name` VARCHAR(64)  NULL,
+  `bucket`       DATETIME     NOT NULL COMMENT '小时起点（UTC）',
+  `requests`     INT          NOT NULL DEFAULT 0 COMMENT '窗口内请求数（增量去重）',
+  `fails`        INT          NOT NULL DEFAULT 0 COMMENT '401/403 计数',
+  `ips`          TEXT         NULL COMMENT 'JSON {ip: {first,last,internal,country,city,isp}}',
+  `devices`      TEXT         NULL COMMENT 'JSON {device_key: {ua_class,browser,...}}',
+  `domains`      TEXT         NULL COMMENT 'JSON {dst_domain: count}',
+  `events`       TEXT         NULL COMMENT 'JSON 时间线快照，封顶 200',
+  `event_keys`   TEXT         NULL COMMENT 'JSON 事件去重键，封顶 1000',
+  `last_active`  DATETIME     NOT NULL,
+  `created_at`   DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at`   DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_lba_user_hour` (`username`, `bucket`),
+  KEY `idx_lba_user_hour_bucket` (`bucket`),
+  KEY `idx_lba_user_hour_last_active` (`last_active`)
+) ENGINE=InnoDB COMMENT='LBA 用户小时聚合';
+
+-- LBA 采集器状态（按源一行）：增量水位 + 最近一轮结果
+CREATE TABLE IF NOT EXISTS `lba_collect_state` (
+  `id`            BIGINT      NOT NULL AUTO_INCREMENT,
+  `source_code`   VARCHAR(32) NOT NULL COMMENT 'ztna',
+  `watermark`     DATETIME    NULL COMMENT '已合并记录的最大 seen_at',
+  `last_run_at`   DATETIME    NULL,
+  `last_status`   VARCHAR(16) NULL COMMENT 'ok / error / skipped',
+  `last_message`  VARCHAR(255) NULL,
+  `fetched_total` BIGINT      NOT NULL DEFAULT 0,
+  `created_at`    DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at`    DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_lba_collect_source` (`source_code`)
+) ENGINE=InnoDB COMMENT='LBA 采集器状态';

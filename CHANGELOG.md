@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### 新增：lba-collector 预聚合采集器（页面秒开 + 历史留存，2026-11-28）
+- Beat 每 5 分钟跑 `aegis.run_lba_collect`：零信任流按水位增量拉取（重叠 2 分钟 + 事件键去重），按「用户×小时」合并进 `lba_user_hourly`（请求数/失败数/IP·设备·域名明细/时间线快照，事件封顶 200、去重键封顶 1000）；水位与采集状态落 `lba_collect_state`
+- 三个查询接口统一「采集库优先」：采集器健康（15 分钟内跑过）读本地表秒开、不受单次 5000 条截断；未运行/刚部署自动回落实时聚合，`window_desc.source` 标明 store/live
+- 时间线补 `dst_domain` 域名（零信任网关字段，如 oa.xx.com），前端详情页绿色展示；时间列解析对齐巡检别名表（此前只认 timestamp/ts，列名出入会导致三个窗口数据一样）
+- overview 增 `requests_total` 与 `window_desc{window_start/end, fetched, records, data_first/last_seen}` 诊断字段；新增 GET `/lba/collect/status` 采集器状态
+- 311 测试全过（新增采集器去重/水位/回退/读数 5 组）
+
+
 ### 修订：LBA 按需时间范围 + 设备类型修正（2026-11-28 真机反馈）
 - 三接口统一新增 `range=1h/24h/7d`：页面按钮按需触发，进入页面不自动打 Graylog；缓存键按 range 隔离
 - 字段随窗口语义改名：active_users / requests / fails_window，响应回显 range

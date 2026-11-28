@@ -233,3 +233,19 @@ def run_patrol_task() -> dict[str, Any]:
         }
     finally:
         db.close()
+
+
+@celery_app.task(name="aegis.run_lba_collect")
+def run_lba_collect_task() -> dict[str, Any]:
+    """LBA 采集器：Beat 每 5 分钟唤醒，零信任流增量预聚合落 MySQL。
+
+    页面（行为分析）在采集器健康时读本地表秒开；采集器未运行或刚部署
+    时自动回落实时聚合，互不影响。
+    """
+    from app.services.lba_collector import run_collect
+
+    db = SessionLocal()
+    try:
+        return run_collect(db, trigger="cron")
+    finally:
+        db.close()

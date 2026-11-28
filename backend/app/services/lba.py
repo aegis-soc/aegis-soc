@@ -27,6 +27,7 @@ from app.cache import cache
 from app.common import BizError
 from app.database import utcnow
 from app.config import settings as default_settings
+from app.models import LbaCollectState, LbaUserHourly
 from app.services import geoip, patrol
 
 import ipaddress
@@ -49,6 +50,7 @@ FETCH_LIMIT = 5000
 TIMELINE_MAX = 200
 CACHE_TTL_OVERVIEW = 120
 CACHE_TTL_PROFILE = 60
+STORE_FRESH_AFTER = timedelta(minutes=15)   # 采集器超过 15 分钟没跑 → 回落实时聚合
 
 # 风险启发阈值：口径与 docs/lba-design.md §风险策略对齐（v1 无事件引擎的降级版）
 HIGH_IP_COUNT = 5          # 7d 内跨 ≥5 个 IP → high
@@ -292,6 +294,114 @@ def _aggregate(db: Session | None, cfg: PatrolConfig, now: datetime,
     return list(users.values()), meta
 
 
+# ---------------------------------------------------------------- 采集库读数
+def _loads_json(text: str | None) -> Any:
+    """预聚合 JSON 列的安全解析；坏数据返回 None 交由调用方兜底。"""
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except (ValueError, TypeError):
+        return None
+
+
+def _store_fresh(db: Session, now: datetime) -> bool:
+    """采集器 15 分钟内跑过才认为预聚合可用；没跑过/刚部署 → 回落实时聚合。"""
+    state = db.query(LbaCollectState).filter_by(source_code="ztna").first()
+    return bool(state and state.last_run_at and state.last_status == "ok"
+                and now - state.last_run_at <= STORE_FRESH_AFTER)
+
+
+def _users_from_store(db: Session, now: datetime, window: timedelta,
+                      username: str | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """读 ``lba_user_hourly`` 预聚合 → 与 ``_aggregate`` 同构的用户统计。
+
+    行按小时桶存：窗口起点落在某小时中间时，该「边界行」的请求/失败按
+    事件时间戳精确裁剪（其余整行计入），避免 1h 窗口被天/小时粒度带偏。
+    """
+    from app.services.lba_collector import EVENTS_CAP  # 事件封顶说明：边界行裁剪在封顶内进行
+    start = now - window
+    start_ms = _ts_ms(start)
+    query = db.query(LbaUserHourly).filter(
+        LbaUserHourly.bucket >= start - timedelta(hours=1),
+        LbaUserHourly.bucket <= now)
+    if username is not None:
+        query = query.filter(LbaUserHourly.username == username)
+    rows = query.all()
+
+    users: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        boundary = row.bucket < start
+        events = [e for e in (_loads_json(row.events) or [])
+                  if not boundary or e.get("ts", 0) >= start_ms]
+        delta_req = len(events) if boundary else row.requests
+        delta_fail = (sum(1 for e in events if e.get("status_code") in (401, 403))
+                      if boundary else row.fails)
+        user = users.setdefault(row.username, {
+            "username": row.username, "display_name": row.display_name or "",
+            "last_active": row.last_active, "requests_window": 0, "fails_window": 0,
+            "ip_7d": {}, "devices": {}, "timeline": [],
+        })
+        if not user["display_name"] and row.display_name:
+            user["display_name"] = row.display_name
+        user["last_active"] = max(user["last_active"], row.last_active)
+        user["requests_window"] += delta_req
+        user["fails_window"] += delta_fail
+        user["timeline"].extend(events[:EVENTS_CAP])
+        ips = _loads_json(row.ips) or {}
+        devices = _loads_json(row.devices) or {}
+        for ip, meta_i in ips.items():
+            entry = user["ip_7d"].setdefault(ip, meta_i)
+            entry["first"] = min(entry["first"], meta_i["first"])
+            entry["last"] = max(entry["last"], meta_i["last"])
+        for dkey, meta_d in devices.items():
+            if dkey not in user["devices"] or \
+                    meta_d["last_active"] > user["devices"][dkey]["last_active"]:
+                user["devices"][dkey] = {"device_key": dkey, **meta_d}
+
+    result: list[dict[str, Any]] = []
+    for user in users.values():
+        user["timeline"] = sorted(user["timeline"], key=lambda e: e["ts"], reverse=True)
+        user["device_count"] = len(user["devices"])
+        # 内网 IP 不参与异常判定，口径与实时聚合一致
+        public_ips = {ip: v for ip, v in user["ip_7d"].items()
+                      if not v.get("internal", True)}
+        user["ip_count_7d"] = len(public_ips)
+        user["country_count_7d"] = len({v.get("country") for v in public_ips.values()
+                                        if v.get("country")})
+        user["risk"] = _classify_risk(user)
+        result.append(user)
+
+    in_window_requests = sum(u["requests_window"] for u in result)
+    meta = {
+        "fetched": in_window_requests, "records": in_window_requests,
+        "rows": len(rows),
+        "data_first_seen": min((r.bucket for r in rows), default=None),
+        "data_last_seen": max((r.last_active for r in rows), default=None),
+    }
+    return result, meta
+
+
+def _collect_users(db: Session | None, cfg: PatrolConfig, now: datetime,
+                   username: str | None = None,
+                   window: timedelta = WINDOW_7D) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """统一取数入口：采集器健康 → 读预聚合表；否则/失败 → 回落实时聚合。
+
+    两条路径产出同构 (users, meta)，meta.source 标明数据来源（store/live），
+    供前端诊断行展示——三个窗口数据异常时先看这个。
+    """
+    if db is not None and _store_fresh(db, now):
+        try:
+            users, meta = _users_from_store(db, now, window, username=username)
+            meta["source"] = "store"
+            return users, meta
+        except Exception:
+            logger.warning("LBA 读取预聚合失败，回落实时聚合", exc_info=True)
+    users, meta = _aggregate(db, cfg, now, username=username, window=window)
+    meta["source"] = "live"
+    return users, meta
+
+
 def _device_payload(device: dict[str, Any]) -> dict[str, Any]:
     ips = sorted(device["ips"].items(), key=lambda kv: kv[1]["last_seen"], reverse=True)
     return {
@@ -325,7 +435,7 @@ def login_overview(db: Session | None = None, range_key: str = "") -> dict[str, 
 
     def produce() -> dict[str, Any]:
         now = utcnow()
-        users, meta = _aggregate(db, cfg, now, window=window)
+        users, meta = _collect_users(db, cfg, now, window=window)
         device_keys = {d["device_key"] for u in users for d in u["devices"].values()}
         pending = [u for u in users if u["risk"] in ("medium", "high")]
         return {
@@ -336,7 +446,7 @@ def login_overview(db: Session | None = None, range_key: str = "") -> dict[str, 
             "high_risk_users": len([u for u in users if u["risk"] == "high"]),
             "requests_total": sum(u["requests_window"] for u in users),
             "window_desc": {
-                "window": range_key,
+                "window": range_key, "source": meta["source"],
                 "window_start": _fmt(now - window), "window_end": _fmt(now),
                 "fetched": meta["fetched"], "records": meta["records"],
                 "data_first_seen": _fmt(meta["data_first_seen"]) if meta["data_first_seen"] else "",
@@ -360,7 +470,7 @@ def anomaly_users(db: Session | None = None, risk_level: str = "",
     def produce() -> dict[str, Any]:
         cfg = load_config(db, base=default_settings)
         now = utcnow()
-        users, _meta = _aggregate(db, cfg, now, window=window)
+        users, _meta = _collect_users(db, cfg, now, window=window)
         items = []
         for u in users:
             if risk_level and u["risk"] != risk_level:
@@ -399,11 +509,24 @@ def user_profile(db: Session | None = None, username: str = "",
     def produce() -> dict[str, Any]:
         cfg = load_config(db, base=default_settings)
         now = utcnow()
-        matches, _meta = _aggregate(db, cfg, now, username=username, window=window)
+        matches, _meta = _collect_users(db, cfg, now, username=username, window=window)
         if not matches:
             raise BizError(f"用户 {username} 在所选时间范围内无行为记录", 404, 404)
         user = matches[0]
-        timeline = sorted(user["timeline"], key=lambda r: r["seen_at"], reverse=True)
+        timeline = user["timeline"]
+        entries: list[dict[str, Any]] = []
+        for ev in timeline[:TIMELINE_MAX]:
+            if "seen_at" in ev:                       # 实时聚合路径：原始记录字典
+                entries.append({
+                    "ts": _ts_ms(ev["seen_at"]), "app_id": ev["app_id"], "url": ev["url"],
+                    "domain": ev["domain"], "method": ev["method"],
+                    "status_code": ev["status_code"], "src_ip": ev["src_ip"]})
+            else:                                     # 预聚合路径：时间线快照
+                entries.append({
+                    "ts": ev["ts"], "app_id": ev.get("app_id") or "", "url": ev.get("url") or "",
+                    "domain": ev.get("domain") or "", "method": ev.get("method") or "",
+                    "status_code": int(ev.get("status_code") or 0),
+                    "src_ip": ev.get("src_ip") or ""})
         return {
             "username": user["username"], "display_name": user["display_name"],
             "range": range_key, "risk": user["risk"],
@@ -411,11 +534,7 @@ def user_profile(db: Session | None = None, username: str = "",
             "ip_count_7d": user["ip_count_7d"],
             "country_count_7d": user["country_count_7d"],
             "device_count": user["device_count"],
-            "timeline": [{
-                "ts": _ts_ms(r["seen_at"]), "app_id": r["app_id"], "url": r["url"],
-                "domain": r["domain"],
-                "method": r["method"], "status_code": r["status_code"], "src_ip": r["src_ip"],
-            } for r in timeline],
+            "timeline": entries,
             "devices": [_device_payload(d) for d in
                         sorted(user["devices"].values(),
                                key=lambda d: d["last_active"], reverse=True)],

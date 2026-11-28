@@ -38,3 +38,11 @@ def anomaly_users(risk_level: str = "", page: int = 1, page_size: int = 20,
 def user_profile(username: str, range: str = "", db: Session = Depends(get_db),
                  _=Depends(require_perms("lba:read"))):
     return ok(lba.user_profile(db, username, range_key=range))
+
+
+@router.get("/collect/status")
+def collect_status(db: Session = Depends(get_db),
+                   _=Depends(require_perms("lba:read"))):
+    """采集器状态：水位、最近一轮结果、预聚合行数（诊断用）。"""
+    from app.services.lba_collector import collect_status as _status
+    return ok(_status(db))

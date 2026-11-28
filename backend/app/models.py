@@ -583,3 +583,59 @@ class SystemSetting(Base):
     svalue: Mapped[str] = mapped_column(Text, nullable=False, default="")
     updated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class LbaUserHourly(Base):
+    """LBA 登录行为分析：用户 × 小时预聚合行（lba-collector 落库）。
+
+    为什么按小时而不是按天：页面窗口是 1h/24h/7d，天粒度下 1h 窗口会把
+    一整天都算进去；小时行让三个窗口都能按行边界裁剪。行内容：
+    - ``requests/fails``：窗口内请求/失败计数（增量合并，按事件键去重）；
+    - ``events``：时间线事件快照（封顶 200，超出丢最旧）；
+    - ``event_keys``：事件去重键（封顶 1000，供两轮采集窗口重叠去重）；
+    - ``ips/devices/domains``：IP / 设备指纹 / 访问域名明细（JSON 合并）。
+    页面读数时跨行 union 出 IP/设备集合并重算风险，原始日志不落库。
+    """
+    __tablename__ = "lba_user_hourly"
+    __table_args__ = (
+        UniqueConstraint("username", "bucket", name="uk_lba_user_hour"),
+        Index("idx_lba_user_hour_bucket", "bucket"),
+        Index("idx_lba_user_hour_last_active", "last_active"),
+    )
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(64), nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    bucket: Mapped[datetime] = mapped_column(DateTime, nullable=False)   # 小时起点（UTC naive）
+    requests: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    fails: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    ips: Mapped[str | None] = mapped_column(Text, nullable=True)         # JSON {ip: {...}}
+    devices: Mapped[str | None] = mapped_column(Text, nullable=True)     # JSON {device_key: {...}}
+    domains: Mapped[str | None] = mapped_column(Text, nullable=True)     # JSON {domain: count}
+    events: Mapped[str | None] = mapped_column(Text, nullable=True)      # JSON [{ts,url,...}] 封顶 200
+    event_keys: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON [key,...] 封顶 1000
+    last_active: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class LbaCollectState(Base):
+    """LBA 采集器状态（按源一行）：增量水位与最近一轮结果。
+
+    水位语义：``watermark`` 是已合并记录的最大 ``seen_at``；每轮取
+    ``[watermark - 重叠, now]``，重叠 2 分钟 + 事件键去重，保证Graylog
+    迟到记录不丢、边界重复不重计。首轮水位为空时回填 7 天（受单次 5000
+    条上限约束，后续增量轮自然补齐）。
+    """
+    __tablename__ = "lba_collect_state"
+    __table_args__ = (UniqueConstraint("source_code", name="uk_lba_collect_source"),)
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    source_code: Mapped[str] = mapped_column(String(32), nullable=False)   # ztna
+    watermark: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_status: Mapped[str | None] = mapped_column(String(16), nullable=True)  # ok / error / skipped
+    last_message: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    fetched_total: Mapped[int] = mapped_column(BigIntPK, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
